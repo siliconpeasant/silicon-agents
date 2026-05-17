@@ -10,7 +10,7 @@
     {
       "name": "silicon-crew",
       "source": "./silicon-crew",
-      "description": "SoC 前端 5 角色智能体集合:doc-engineer / rtl-designer / verification-engineer / synthesis-engineer / release-engineer",
+      "description": "SoC 前端 6 角色智能体集合:doc-engineer / rtl-designer / verification-engineer / synthesis-engineer + crg-engineer(Excel→CRG) / integrator(子模块拼顶层,必用 MCP)",
       "version": "1.0.0"
     }
   ]

@@ -5,25 +5,38 @@
 ## 架构
 
 - **主 Agent(你)**:编排 + 调度,串行或并行 spawn subagent
-- **5 个 subagent(插件提供)**:
+- **4 个核心 subagent(插件提供)**:
   | subagent | 阶段 | 产物 |
   |----------|------|------|
   | `soc-doc-engineer` | 文档 | `docs/*.md` |
   | `soc-rtl-designer` | RTL | `rtl/*.v` + `rtl/rtl.f` + `constraints/base.sdc` |
   | `soc-verification-engineer` | 验证 | `tb/*.v` + `sim/results/*.log` |
   | `soc-synthesis-engineer` | 综合 | `syn/output/netlist.v` + 报告 |
-  | `soc-release-engineer` | 发布 | `release/v1.0.0/` 完整包 |
+- **2 个 rtl 阶段特化 subagent**:
+  | subagent | 触发场景 | 关键约束 |
+  |----------|---------|---------|
+  | `soc-crg-engineer` | 子模块是 CRG(时钟复位生成),从 Excel 配置驱动 | **必须用 `crg_gen` MCP 工具**生成,禁止手写 |
+  | `soc-integrator` | 顶层 workspace,需要把多个 rtl=done 的子模块拼成 top | **必须用** MCP `soc_add_chip`(建项目内模块目录)+ `soc_integrate`(top.v)+ `soc_flist`(filelist.f);**filelist.mk 用 `include $(PROJECT_ROOT)/<sub>/de/rtl/filelist.mk` 声明依赖**,严格遵循 skill 模板的 include guard + MODULE_FILELISTS 去重模式;**子模块不拷贝** |
 
 ## 编排顺序(串行)
 
-用户提出需求 → **doc** → **rtl** → **verify** → **syn** → **release**
+用户提出需求 → **doc** → **rtl** → **verify** → **syn**
 
 每阶段 spawn 对应 subagent,等它自检 PASS 后进入下一阶段。如果自检失败,主 Agent 分析原因、spawn 修复者或直接自己修。
 
 ## 并行机会
 
 - 同一阶段内的**独立子模块**可并行 spawn 多个相同 subagent(例如多个 rtl-designer 同时写不同子模块,然后由 top-integrator 拼)
+- **`soc-integrator` 与子模块的 verify/syn 并行**:子模块 rtl=done 后即可启动集成,子模块的 verify/syn 在后台并行进行
 - 当前版本默认串行,除非用户明确说"并行设计多个模块"
+
+## 选哪个 rtl 阶段 agent
+
+当 spawn rtl 阶段时,主 Agent 按下面规则选:
+
+1. 子模块是 CRG / clk_rst_gen / 时钟复位生成模块,**且**用户提供了 Excel 配置 → `soc-crg-engineer`
+2. 当前任务是顶层集成(已有多个子模块 rtl=done) → `soc-integrator`
+3. 其它(普通组合/时序/状态机) → `soc-rtl-designer`(默认)
 
 ## Workspace 路径
 
@@ -50,7 +63,6 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_doc_completeness.py <workspace>
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_rtl_quality.py <workspace>
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_sim_pass.py <workspace>
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_timing.py <workspace>
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_release_integrity.py <workspace>
 ```
 
 ## 快速启动模板
@@ -67,10 +79,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_release_integrity.py <workspace>
    - 各阶段状态(doc/rtl/verif/syn)
    - 关键交付物清单
    - 验证结果(仿真PASS,时序WNS/TNS)
-   等待用户确认"总结无误"
-8. 用户确认总结后 → **询问用户"是否执行发布打包?"**
-9. 用户确认发布 → spawn `soc-release-engineer`
-10. 报告最终交付物路径
+8. 报告最终交付物路径
 
 ---
 *silicon-crew@siliconpeasant v1.0.0 — 2026-05-17*

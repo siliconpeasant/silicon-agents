@@ -59,18 +59,6 @@ def _new_pipeline() -> dict:
             "artifacts": [],
             "check_results": [],
             "notes": ""
-        },
-        "release": {
-            "step_id": "release",
-            "name": "集成与版本发布",
-            "agent": "soc-release-engineer",
-            "status": "blocked",
-            "blocked_by": ["doc", "rtl", "verif", "syn"],
-            "started_at": None,
-            "completed_at": None,
-            "artifacts": [],
-            "check_results": [],
-            "notes": ""
         }
     }
 

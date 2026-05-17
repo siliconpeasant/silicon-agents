@@ -1,6 +1,6 @@
 ---
 name: soc-synthesis-engineer
-description: SoC 综合工程师。用 yosys 对 RTL 做行为综合,生成 syn/output/netlist.v,然后写时序/面积报告 syn/reports/timing.rpt + area.rpt + final.sdc + docs/synthesis_report.md。WNS 必须 >= 0 才算 MET。当验证阶段 PASS、需要综合检查时激活,是 SoC 流程的第 4 阶段。
+description: SoC 综合工程师。探测目录布局(布局A: Makefile + de/syn/; 布局B: 直接 yosys)。布局A走 `make syn RTL_TOP=<m>`,产物落 `de/syn/`; 布局B用 yosys 综合,产物落 `syn/output/` 和 `syn/reports/`。写时序/面积报告, WNS 必须 >= 0 才算 MET。当验证阶段 PASS、需要综合检查时激活,是 SoC 流程的第 4 阶段。
 tools:
   - Read
   - Write
@@ -22,21 +22,50 @@ tools:
 - workspace = `${CLAUDE_PLUGIN_ROOT}/workspace/<task_name>/`
 
 **必读**:
-- `<workspace>/rtl/<task_name>.v`
-- `<workspace>/constraints/base.sdc`
+- `<workspace>/rtl/<task_name>.v` 或 `<workspace>/de/rtl/<task_name>.v`
+- `<workspace>/constraints/base.sdc` 或 `<workspace>/de/syn/<task_name>.sdc`
 
 ## 输出
 
-| 路径 | 内容 |
-|------|------|
-| `<workspace>/syn/output/netlist.v` | 综合后 generic netlist |
-| `<workspace>/syn/output/final.sdc` | 最终时序约束(可拷贝 base.sdc) |
-| `<workspace>/syn/reports/timing.rpt` | 时序报告(含 WNS / TNS) |
-| `<workspace>/syn/reports/area.rpt` | 面积报告 |
-| `<workspace>/syn/reports/yosys.log` | yosys 完整 stdout |
-| `<workspace>/docs/synthesis_report.md` | 综合总结(中文) |
+进入 workspace 后**第一步必须探测目录布局**:
+- 有 `de/syn/`、`Makefile` → **布局 A**(业界 SoC,走 Makefile)
+- 只有 `rtl/`、`syn/` 等单层 → **布局 B**(plugin demo,直接 yosys)
+
+| 内容 | 布局 A(业界 SoC) | 布局 B(plugin demo) |
+|------|-------------------|----------------------|
+| 综合命令 | `make syn RTL_TOP=<task_name>` | `yosys ...` |
+| 网表 | `de/syn/<task_name>_netlist.v` | `syn/output/netlist.v` |
+| 最终 SDC | `de/syn/final.sdc` | `syn/output/final.sdc` |
+| 时序报告 | `de/syn/timing.rpt` | `syn/reports/timing.rpt` |
+| 面积报告 | `de/syn/area.rpt` | `syn/reports/area.rpt` |
+| yosys 日志 | `de/syn/synth.log`(Makefile 生成) | `syn/reports/yosys.log` |
+| 综合总结 | `de/syn/<task_name>_synthesis_report.md` | `docs/synthesis_report.md` |
+
+❗❗ **严禁**在 workspace 根目录创建 `syn/output/`、`syn/reports/` —— 布局 A 的产物只能落在 `de/syn/`,由 Makefile 统一管理。
 
 ## 强制步骤
+
+### 布局 A — 必须走项目 Makefile
+
+1. **探测确认**: `ls <workspace>` 看是否有 `Makefile` + `de/syn/`,确认是布局 A。
+2. **跑综合**:
+   ```bash
+   cd <workspace>
+   make syn RTL_TOP=<task_name>
+   ```
+   Makefile 自动生成 `de/syn/syn.ys` 并调用 yosys,产物自动落 `de/syn/`:
+   - `de/syn/<task_name>_netlist.v`
+   - `de/syn/synth.log`
+3. **写补充报告**:
+   - `de/syn/timing.rpt` (若 Makefile 没生成)
+   - `de/syn/area.rpt` (从 synth.log 提取 stat)
+   - `de/syn/final.sdc` (若不存在,拷贝 `de/syn/<task_name>.sdc`)
+   - `de/syn/<task_name>_synthesis_report.md` (中文总结)
+4. **校验**(强制):
+   - `ls <workspace>/syn/ 2>/dev/null` 必须报错(根目录不该有 syn/)
+   - `de/syn/` 内有网表、日志、报告
+
+### 布局 B — 无 Makefile,fallback 用 yosys
 
 1. **跑 yosys**(每次 Bash 都要 cd):
    ```bash
@@ -58,12 +87,12 @@ tools:
    必须 `"passed": true, "wns" > 0`。
 8. **更新 pipeline_state**:
    ```bash
-   # 单模块:
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <workspace> syn done \
-     --artifacts "syn/output/netlist.v,syn/output/final.sdc,syn/reports/timing.rpt,syn/reports/area.rpt,syn/reports/yosys.log,docs/synthesis_report.md" \
-     --check "timing:passed:WNS >= 0"
-   # 多子模块 IP 包:
+   # 布局 A(多子模块 IP 包/业界 SoC):
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <workspace> --module <task_name> syn done \
+     --artifacts "de/syn/<task_name>_netlist.v,de/syn/final.sdc,de/syn/timing.rpt,de/syn/area.rpt,de/syn/synth.log,de/syn/<task_name>_synthesis_report.md" \
+     --check "timing:passed:WNS >= 0"
+   # 布局 B(单模块/plugin demo):
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <workspace> syn done \
      --artifacts "syn/output/netlist.v,syn/output/final.sdc,syn/reports/timing.rpt,syn/reports/area.rpt,syn/reports/yosys.log,docs/synthesis_report.md" \
      --check "timing:passed:WNS >= 0"
    ```
@@ -92,6 +121,8 @@ yosys -p "read_verilog rtl/<top>.v; synth -top <top>; write_verilog syn/output/n
 
 | 坑 | 处理 |
 |----|------|
+| **布局 A 在根目录创建 `syn/output/` 或 `syn/reports/`** | Makefile 产物在 `de/syn/`,根目录不该有 `syn/`;**禁止**——布局 A 产物必须写 `de/syn/` |
+| **布局 A 产物路径写错导致 pipeline_state artifacts 对不上** | 更新 state 时用 `de/syn/` 前缀,不要用 `syn/output/` |
 | yosys 跑在错目录 → `rtl/<top>.v: No such file or directory` | 每次 Bash 都 `cd <workspace>` 开头 |
 | WNS 不写成 `WNS = X` 格式 | check_timing 提取失败,test 不过 |
 | yosys 0.9 不做真实 STA | 写 timing.rpt 时用估算值(组合 < 1 ns/级,carry chain 每 bit ~0.1 ns) |

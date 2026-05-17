@@ -1,6 +1,6 @@
 # Pipeline State 机制 (强制)
 
-每个独立模块开发需求必须有一个 `pipeline_state.json`,作为**单一事实来源**(single source of truth)记录 5 阶段状态。
+每个独立模块开发需求必须有一个 `pipeline_state.json`,作为**单一事实来源**(single source of truth)记录 4 阶段状态。
 
 ## 文件位置
 
@@ -15,7 +15,7 @@
 
 ### 单模块模式 (默认)
 
-一个 `pipeline_state.json` 管理一个模块的 5 阶段:
+一个 `pipeline_state.json` 管理一个模块的 4 阶段:
 ```bash
 python3 init_state.py ./ip/digital/timer timer
 ```
@@ -100,13 +100,12 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/query_state.py <module_dir>
 
 ```
 doc ──→ rtl ──→ verif
-          └────→ syn ──→ release
+          └────→ syn
 ```
 
 - `rtl` 依赖 `doc`
 - `verif` 依赖 `rtl`
 - `syn` 依赖 `rtl`
-- `release` 依赖 `doc` + `rtl` + `verif` + `syn`
 
 ## Agent 强制步骤 (追加到各 agent 定义的末尾)
 
@@ -134,12 +133,41 @@ N. **更新 pipeline_state**:
 3. **遇到 fail**:停止自动推进,向用户报告失败阶段 + 原因 + 建议
 4. **禁止**:跳过 state 查询直接 spawn agent,或 agent 跳过 state 更新直接返回
 
+### Spawn prompt 必备字段(❗ 主 Agent 强制项)
+
+主 Agent 在 spawn 任何 subagent 时,prompt 里**必须**显式包含以下三项,否则 subagent 的 update_state 会落到错误路径或被跳过:
+
+```
+- workspace: <绝对路径,例如 /Users/.../ip/digital/soc_ip_common/>
+- 模块名: <task_name>(多子模块 IP 包时必填,单模块可省略)
+- 完成约束: "完成后必须调用 update_state.py 更新对应 module/step,完成报告里必须列出 update_state 的 stdout 一行"
+```
+
+### 主 Agent 收到 subagent 回报后
+
+必须**立即**调用 `query_state.py` 验证 state 真的被更新了(状态变成 done、artifacts 非空)。**禁止**:
+- 攒到所有阶段完成再统一写 state(state 是协作信号,不是事后日志)
+- 假设 subagent 一定调了 update_state.py(报告里没看到 stdout 就当没调,主 Agent 补写)
+- 把"更新 pipeline_state"作为 TaskList 尾部独立 task —— 它是每阶段 in_progress→completed 的**内置副作用**,不是单独工作项
+
 ## 已集成 state 更新的 agent 清单
 
 | Agent | 阶段 | state 更新位置 |
 |-------|------|---------------|
 | soc-doc-engineer | doc | 自检 `check_doc_completeness` 之后 |
 | soc-rtl-designer | rtl | 自检 `check_rtl_quality` + lint 之后 |
+| soc-crg-engineer | rtl (特化) | crg_gen 产出整理 + lint + `check_rtl_quality` 之后 |
+| soc-integrator | rtl (顶层特化) | soc_integrate 产出 + elab + lint + `check_rtl_quality` 之后 |
 | soc-verification-engineer | verif | 自检 `check_sim_pass` 之后 |
 | soc-synthesis-engineer | syn | 自检 `check_timing` 之后 |
-| soc-release-engineer | release | 自检 `check_release_integrity` 之后 |
+
+## 集成场景的 state 处理
+
+当存在顶层集成(`soc-integrator`)时:
+
+- **子模块** workspace 各自维护独立的 `pipeline_state.json`(单模块模式或多子模块 IP 包模式皆可)
+- **顶层** workspace 独立一份 `pipeline_state.json`,模块名 = `top_name`,4 阶段照常
+- 顶层 rtl 阶段由 `soc-integrator` 完成(初始化 + 直接标记 done),后续 verify / syn 用通用 agent
+- `soc-integrator` 的依赖是**子模块的 rtl 阶段 done**,不依赖子模块的 verify / syn —— 这两者可与集成**并行**进行
+- 集成时主 Agent 必须显式传入子模块 workspace 路径,不读子模块 state(state 是各 workspace 的私有产物)
+- **子模块文件不复制到顶层**:integrator 用 MCP `soc_add_chip` 在 silicon-crew 项目的 `chip/<top>/` 下创建标准模块目录,然后 Edit 该目录下的 `de/rtl/filelist.mk` 插入 `include $(PROJECT_ROOT)/<子模块>/de/rtl/filelist.mk` 行(skill 模板的依赖区块)。子模块 filelist.mk 内部的 include guard + `MODULE_FILELISTS` 去重机制自动处理依赖链。子模块 RTL 保留在原 workspace,`make comp` 时由 `common.mk` 把 `$(MODULE_FILELISTS)` 展开 cat 成 dut.f

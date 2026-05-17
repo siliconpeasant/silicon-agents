@@ -1,14 +1,29 @@
-# SoC 设计 5 阶段流水线 (强制 / silicon-crew)
+# SoC 设计 4 阶段流水线 (强制 / silicon-crew)
 
 任何 RTL 模块的创建、重构,主 Agent **必须** spawn 对应 subagent;**禁止**主 Agent 自己手写 RTL 或 testbench。
 
 | 阶段 | subagent | 产物 |
 |---|---|---|
 | 1 文档 | `silicon-crew:soc-doc-engineer` | `docs/design_spec.md`、`interface_spec.md`、`regmap.md`、`verification_plan.md` |
-| 2 RTL | `silicon-crew:soc-rtl-designer` | `rtl/<module>.v` + `rtl/rtl.f` + `constraints/base.sdc`,verilator `-Wall` lint-clean |
+| 2 RTL | `silicon-crew:soc-rtl-designer` *(标准实现)* | `rtl/<module>.v` + `rtl/rtl.f` + `constraints/base.sdc`,verilator `-Wall` lint-clean |
 | 3 验证 | `silicon-crew:soc-verification-engineer` | `tb/*.v` + `sim/results/<task>_tb.log`,iverilog + vvp,0 ERROR / 0 MISMATCH |
 | 4 综合 | `silicon-crew:soc-synthesis-engineer` | `syn/output/netlist.v` + `timing.rpt` + `area.rpt`,WNS ≥ 0 |
-| 5 发布 | `silicon-crew:soc-release-engineer` | `release/v1.0.0/` + `manifest.yaml` + `checksums.txt` + `RELEASE_NOTES.md` |
+
+## rtl 阶段的特化实现
+
+rtl 阶段除了通用的 `soc-rtl-designer`,还有两个**特化 agent**——根据场景替换 rtl-designer 使用,产物结构仍然落在 rtl/ + constraints/ 标准目录:
+
+| 特化 agent | 适用场景 | 关键约束 |
+|---|---|---|
+| `silicon-crew:soc-crg-engineer` | 子模块是 CRG(时钟复位生成),由 Excel 配置驱动 | **必须**用 `crg_gen` MCP 工具,禁止手写时钟分频/复位同步逻辑 |
+| `silicon-crew:soc-integrator` | 顶层 workspace,把多个已完成 rtl 的子模块拼成 top | **必须**用 `soc_integrate` MCP 工具,禁止手写顶层 module |
+
+选择规则:
+- 普通 RTL 设计(算术/控制/状态机) → `soc-rtl-designer`
+- CRG / 时钟复位子系统 → `soc-crg-engineer`(输入是 Excel,不是 spec)
+- 顶层集成(已有多个子模块 rtl=done) → `soc-integrator`(顶层 workspace 独立)
+
+特化 agent 完成后 `pipeline_state.json` 里的 rtl 阶段同样标记 `done`,verify / syn 阶段沿用通用 agent。
 
 ## 自检
 

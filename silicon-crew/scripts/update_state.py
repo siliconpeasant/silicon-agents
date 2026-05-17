@@ -35,10 +35,6 @@ def _new_pipeline() -> dict:
         "syn": {"step_id": "syn", "name": "逻辑综合与时序分析", "agent": "soc-synthesis-engineer",
                 "status": "pending", "started_at": None, "completed_at": None,
                 "artifacts": [], "check_results": [], "notes": ""},
-        "release": {"step_id": "release", "name": "集成与版本发布", "agent": "soc-release-engineer",
-                    "status": "blocked", "blocked_by": ["doc", "rtl", "verif", "syn"],
-                    "started_at": None, "completed_at": None,
-                    "artifacts": [], "check_results": [], "notes": ""},
     }
 
 
@@ -61,7 +57,6 @@ def _compute_next_actions(pipeline: dict) -> list:
         "rtl": ["doc"],
         "verif": ["rtl"],
         "syn": ["rtl"],
-        "release": ["doc", "rtl", "verif", "syn"],
     }
     for step_name, step_info in pipeline.items():
         status = step_info.get("status")
@@ -80,7 +75,7 @@ def _compute_next_actions(pipeline: dict) -> list:
 def update_pipeline(pipeline: dict, step: str, status: str,
                     artifacts: list = None, check: str = None, note: str = None):
     if step not in pipeline:
-        # 兼容旧版可能缺失 release 等情况
+        # 兼容旧版可能缺失阶段的情况
         pipeline[step] = _new_pipeline()[step]
 
     step_data = pipeline[step]
@@ -148,7 +143,7 @@ def _now() -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Update pipeline state")
     parser.add_argument("module_dir", help="模块或 IP 包根目录")
-    parser.add_argument("step", choices=["doc", "rtl", "verif", "syn", "release"], help="阶段名")
+    parser.add_argument("step", choices=["doc", "rtl", "verif", "syn"], help="阶段名")
     parser.add_argument("status", choices=["pending", "in_progress", "done", "fail", "blocked"], help="状态")
     parser.add_argument("--module", default=None, help="子模块名(多模块 IP 包时必须)")
     parser.add_argument("--artifacts", default=None, help="产物文件列表,逗号分隔")
