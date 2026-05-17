@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+  "name": "silicon-crew",
+  "version": "1.0.0",
+  "description": "硅农工组 (Silicon Crew) — SoC 前端设计 5 角色智能体集合。doc-engineer(规格文档)、rtl-designer(Verilog RTL)、verification-engineer(testbench + 仿真)、synthesis-engineer(yosys 综合 + 时序)、release-engineer(打包发布)。从需求到流片包的完整流水线,主 Agent 编排即可。内置 soc-build skill + MCP server,提供 Verilog 端口提取、智能集成、CRG/Memory Map/Regmap 从 Excel/YAML 生成等能力。",
+  "author": {
+    "name": "Silicon Peasant",
+    "url": "https://github.com/siliconpeasant"
+  },
+  "keywords": [
+    "soc",
+    "rtl",
+    "verilog",
+    "verification",
+    "synthesis",
+    "multi-agent",
+    "skill",
+    "mcp",
+    "siliconpeasant"
+  ],
+  "homepage": "https://github.com/siliconpeasant/silicon-agents",
+  "mcpServers": {
+    "soc-build": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/skills/soc-build/mcp_server.py"]
+    }
+  }
+}

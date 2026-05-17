@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "siliconpeasant",
+  "description": "硅农 (Silicon Peasant) 的 EDA / SoC 智能体插件市集 — agent-driven RTL 设计 / 验证 / 综合 / 流片打包流水线",
+  "owner": {
+    "name": "Silicon Peasant",
+    "url": "https://github.com/siliconpeasant"
+  },
+  "plugins": [
+    {
+      "name": "silicon-crew",
+      "source": "./silicon-crew",
+      "description": "SoC 前端 5 角色智能体集合:doc-engineer / rtl-designer / verification-engineer / synthesis-engineer / release-engineer",
+      "version": "1.0.0"
+    }
+  ]
+}
