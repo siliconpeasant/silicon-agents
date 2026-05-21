@@ -81,5 +81,16 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_timing.py <workspace>
    - 验证结果(仿真PASS,时序WNS/TNS)
 8. 报告最终交付物路径
 
+## 安全准则
+
+- 执行任何可能破坏数据的命令前（`rm`, `git reset --hard`, `git push --force`, `git clean -f` 等），必须显式向用户确认并说明后果
+- 执行 `python3` 脚本前，先检查脚本内容，确认没有破坏性操作（删除文件、覆盖系统配置、网络请求等）
+- 不覆盖 `~/.ssh/`、`~/.zshrc`、`~/.bash_profile`、`/etc/` 等系统配置文件
+- 编辑或写文件前，如果目标文件在 git 跟踪中，优先确认用户已保存当前工作
+- 不主动执行 `sudo`、`chmod`、`chown` 等权限变更命令
+- 不主动执行 `curl ... | bash` 或 `wget ...` 等远程脚本下载执行操作
+- 使用 `cp`/`mv` 覆盖已有文件前，先确认目标文件不是关键配置或系统文件
+- Agent 内部 spawn 的 subagent 同样遵循上述安全准则
+
 ---
 *silicon-crew@siliconpeasant v1.0.0 — 2026-05-17*

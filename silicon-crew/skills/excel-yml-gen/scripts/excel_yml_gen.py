@@ -632,7 +632,7 @@ def add_header(print_line, filename):
     print_line.append("// ALL RIGHTS RESERVED Worldwide")
     print_line.append("//         ")
     print_line.append("// Author        : "+user)
-    print_line.append("// Email         :  @siliconpeasant.com")
+    print_line.append("// Email         : "+user+"@foxmail.com")
     print_line.append("// Created On    : "+date1+" "+time)
     print_line.append("// Last Modified : "+date1+" "+time)
     print_line.append("// File Name     : "+filename)

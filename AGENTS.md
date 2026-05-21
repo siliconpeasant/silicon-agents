@@ -1,6 +1,5 @@
 # silicon-agents 项目安全规范
 
-
 ## 数据保护
 - 执行 `rm`、`del`、`mv`、`rmdir`、`rd`、`erase` 等删除/移动命令前，务必二次确认目标路径是否正确
 - **禁止用 Python 脚本绕过删除确认** — `os.remove()`、`shutil.rmtree()`、`Path.unlink()` 等删除/覆盖操作，执行前必须找用户确认
