@@ -12,3 +12,6 @@
 
 ## 不可逆操作
 - 对于 `git reset --hard`、`git clean -fd`、`reg delete` 等不可逆操作，必须额外谨慎，一律询问确认
+
+## Git 推送
+- `git push` 不在系统 hook 拦截范围内，但**必须主动找用户确认**后才能执行
