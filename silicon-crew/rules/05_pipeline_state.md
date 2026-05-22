@@ -76,7 +76,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <module_dir> <step> <statu
 ```bash
 # RTL 完成,lint clean
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py ./ip/digital/timer rtl done \
-  --artifacts "de/rtl/timer.v,de/rtl/rtl.f,de/rtl/timer.sdc" \
+  --artifacts "de/rtl/timer.v,de/rtl/rtl.f,de/constraints/base.sdc" \
   --check "lint:passed:verilator -Wall 0 warn 0 error"
 
 # 验证失败
