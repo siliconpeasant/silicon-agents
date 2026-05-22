@@ -23,6 +23,7 @@ if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] || [ ! -d "${CLAUDE_PLUGIN_ROOT}/rules" ]; t
 fi
 
 # 3. Concatenate rules/*.md and emit JSON via python3
+export PYTHONIOENCODING=utf-8
 exec python3 - <<'PYEOF'
 import glob
 import json

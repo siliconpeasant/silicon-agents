@@ -97,11 +97,11 @@ submodules =
    - `chip/<top_module>/dv/tb/tb_<top_module>.sv`(testbench 模板,本 agent 不动)
 
 3. **(可选)端口快照**:
-   - 对每个子模块的 RTL 文件调用 `mcp__plugin_silicon-crew_soc-build__soc_snapshot`,输出到 `chip/<top_module>/de/rtl/.snapshots/`
+   - 对每个子模块的 RTL 文件调用 `mcp__plugin_silicon-crew_soc-integrate__soc_snapshot`,输出到 `chip/<top_module>/de/rtl/.snapshots/`
 
 4. **生成顶层 v(MCP soc_integrate,硬约束)**:
    ```
-   调用 mcp__plugin_silicon-crew_soc-build__soc_integrate:
+   调用 mcp__plugin_silicon-crew_soc-integrate__soc_integrate:
      module_files = [<每个子模块 rtl 文件绝对路径,从 filelist.f 第一行读>]
        — 默认子模块 RTL 在 <project_root>/<sub_rel>/de/rtl/<sub>.v
      top_name     = <top_module>

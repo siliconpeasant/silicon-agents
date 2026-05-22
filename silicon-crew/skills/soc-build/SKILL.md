@@ -1,6 +1,6 @@
 ---
 name: soc-build
-description: SoC 顶层 RTL 集成与寄存器/CRG 生成工具集，支持 Verilog 端口提取、智能连接、顶层自动生成、端口变更追踪、CRG/Memory Map/寄存器从 Excel/YAML 生成等功能。
+description: SoC 项目脚手架与仿真基础 skill。提供项目初始化、模块创建、filelist 生成、lint 检查、编译仿真等核心能力。端口提取、顶层集成、CRG/寄存器生成等功能已拆分为独立 skill（soc-integrate、yml2reg、crg-req-to-design、cr-tree-diag-gen 等）。
 ---
 
 # SoC Build
@@ -14,9 +14,9 @@ SoC 前端 RTL 集成与自动化生成专用 skill。
 ### 1.1 项目初始化 — `soc_project_init.py`
 
 ```bash
-python3 /skills/soc-build/scripts/soc_project_init.py init <project_name> -o <output_dir> -t <top_module>
-python3 /skills/soc-build/scripts/soc_project_init.py add_ip <ip_name> -p <project_dir> -t {digital|third_party}
-python3 /skills/soc-build/scripts/soc_project_init.py add_chip <module_name> -p <project_dir>
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/soc-build/scripts/soc_project_init.py init <project_name> -o <output_dir> -t <top_module>
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/soc-build/scripts/soc_project_init.py add_ip <ip_name> -p <project_dir> -t {digital|third_party}
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/soc-build/scripts/soc_project_init.py add_chip <module_name> -p <project_dir>
 ```
 
 生成标准化 SoC 前端目录结构：
@@ -41,7 +41,7 @@ python3 /skills/soc-build/scripts/soc_project_init.py add_chip <module_name> -p 
 │   └── digital/
 │       └── template_ip/     # IP 模板（可独立仿真）
 ├── doc/                     # 文档
-├── /skills/soc-build/scripts/                 # 公共脚本
+├── scripts/                 # 公共脚本（由 soc_project_init.py 自动生成指向 skill 的引用）
 │   ├── setup.sh
 │   └── common.mk
 └── Makefile                 # 项目顶层入口
@@ -108,7 +108,7 @@ make syn          # 综合当前模块，RTL 来源自动从 filelist 获取
 ### 6.1 Filelist 生成 — `soc_gen_flist.py`
 
 ```bash
-python3 /skills/soc-build/scripts/soc_gen_flist.py <path> -o <filelist.f>
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/soc-build/scripts/soc_gen_flist.py <path> -o <filelist.f>
 ```
 
 递归扫描目录，生成 `.f` 文件列表（legacy 工具，新项目推荐用 `make flist`）。
@@ -143,32 +143,26 @@ python3 mcp_server.py --sse
 
 | Tool | 功能 | 底层脚本 |
 |------|------|----------|
+| Tool | 功能 | 底层脚本 |
+|------|------|----------|
 | `soc_init` | 初始化 SoC 项目 | `soc_project_init.py init` |
 | `soc_add_ip` | 新增 IP 模块 | `soc_project_init.py add_ip` |
 | `soc_add_chip` | 新增 chip 子模块 | `soc_project_init.py add_chip` |
-| `soc_extract` | 提取 Verilog 端口 | `soc_integrate.py extract` |
-| `soc_instantiate` | 生成实例化代码 | `soc_integrate.py instantiate` |
-| `soc_wrap` | 生成 wrapper 模块 | `soc_integrate.py wrap` |
-| `soc_csv` | 导出端口到 CSV | `soc_integrate.py csv` |
-| `soc_snapshot` | 保存端口快照 | `soc_integrate.py snapshot` |
-| `soc_diff` | 对比端口与快照差异 | `soc_integrate.py diff` |
-| `soc_extract_map` | 从顶层提取连接关系 | `soc_integrate.py extract-map` |
-| `soc_integrate` | 集成模块到顶层 | `soc_integrate.py integrate` |
-| `soc_update` | 一键刷新顶层 | `soc_integrate.py update` |
-| `soc_remove` | 删除模块并刷新顶层 | `soc_integrate.py remove` |
 | `soc_flist` | 生成 filelist | `soc_gen_flist.py` |
 | `soc_lint` | 执行 lint 检查 | `make lint` |
 | `soc_comp` | 编译仿真 | `make comp` |
-| `yml2reg` | YAML → 寄存器 RTL | `yml2reg/yml2reg.py` |
-| `crg_gen` | CRG 生成（时钟复位） | `crg_gen.py` |
-| `io_top_gen` | IO/Pad 生成 | `io_top_gen.py` |
-| `gen_asic_memmap` | Memory Map 生成 | `gen_asic_memmap.py` |
-| `excel_yml_gen` | Excel 寄存器 → YML/RTL | `excel_yml_gen.py` |
-| `gen_memwrap` | Memory Wrapper 生成 | `gen_memwrap.py` |
+
+> 其他工具已拆分为独立 skill：
+> - **soc-integrate**：`soc_extract`、`soc_instantiate`、`soc_integrate`、`soc_wrap`、`soc_csv`、`soc_snapshot`、`soc_diff`、`soc_extract_map`、`soc_update`、`soc_remove`
+> - **yml2reg**：`yml2reg`
+> - **excel-yml-gen**：`excel_yml_gen`
+> - **crg-req-to-design**：`crg_req_to_design`
+> - **cr-tree-diag-gen**：`cr_tree_diag_gen`
+> - **crg-gen**（未注册）：`crg_gen`、`io_top_gen`、`gen_asic_memmap`、`gen_memwrap`
 
 ### 7.4 设计原则
 
-- **核心 CLI 不动**：`/skills/soc-build/scripts/` 下的所有脚本保持原样，MCP Server 只是轻量包装层
+- **核心 CLI 不动**：`${CLAUDE_PLUGIN_ROOT}/skills/soc-build/scripts/` 下的所有脚本保持原样，MCP Server 只是轻量包装层
 - **全部功能暴露**：所有脚本均通过 MCP 可用，用户只需指定输入文件路径
 - **统一错误处理**：所有 tool 返回字符串结果，stdout/stderr/exit code 统一捕获
 
@@ -189,19 +183,9 @@ python3 mcp_server.py --sse
 
 ---
 
-## 八、CI 自动化测试
+## 八、CI 与测试
 
-项目已配置 GitHub Actions（`.github/workflows/ci.yml`），每次 push/PR 自动运行：
-
-| 测试项 | 说明 |
-|--------|------|
-| 项目初始化 | 验证目录结构、RTL 文件生成、filelist.mk |
-| 基础功能 | `make flist` / `make comp` / `make lint`（chip/top + IP） |
-| 依赖传递 | 配置 `filelist.mk`（top → core），验证 `dut.f` 正确展开 |
-| 有依赖 lint | `make lint LINT_TOOL=iverilog` 在依赖链下正常工作 |
-| 脚本语法检查 | 所有 Python 脚本 `py_compile` 通过 |
-| 脚本帮助信息 | 所有脚本 `-h` / 无参数帮助输出正常 |
-| 生成器工具 | yml2reg、crg_gen、io_top_gen、gen_asic_memmap、excel_yml_gen、socal_integrate、socal_gen_flist 用 demo 数据实际运行验证 |
+> `.github/workflows/ci.yml` 已移除。如需恢复 CI，建议按当前 skill 拆分后的结构重新设计测试矩阵（分别测试 `soc-build`、`soc-integrate`、`yml2reg` 等独立 skill）。
 
 ---
 

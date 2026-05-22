@@ -1,27 +1,29 @@
-# SoC 工具链与 soc-build skill 优先 (强制)
+# SoC 工具链与 skill 优先 (强制)
 
-涉及 Verilog 端口提取、顶层集成、wrapper 生成、寄存器/CRG/Memory Map/Pad 生成、filelist 生成、lint 检查等场景,**必须**优先调用 `mcp__soc-build__*` 工具或激活 `soc-build` skill。**禁止**手写 Python/Bash 脚本重复造轮子。
+涉及 Verilog 端口提取、顶层集成、wrapper 生成、filelist 生成、lint 检查等场景,**必须**优先调用对应 skill 的 MCP 工具。**禁止**手写 Python/Bash 脚本重复造轮子。
 
-## 常用工具映射
+## 常用工具映射（按 skill 分组）
 
-| 任务 | 工具 |
-|---|---|
-| 提取 Verilog 模块端口 | `mcp__soc-build__soc_extract` |
-| 端口快照 / 变更追踪 | `mcp__soc-build__soc_snapshot` / `soc_diff` / `soc_update` |
-| 顶层模块集成 | `mcp__soc-build__soc_integrate` |
-| 信号 wrapper | `mcp__soc-build__soc_wrap` |
-| 实例化代码生成 | `mcp__soc-build__soc_instantiate` |
-| 顶层端口连接提取 | `mcp__soc-build__soc_extract_map` |
-| 项目脚手架 | `mcp__soc-build__soc_init` / `soc_add_chip` / `soc_add_ip` |
-| filelist 生成 | `mcp__soc-build__soc_flist` |
-| 编译仿真 | `mcp__soc-build__soc_comp` |
-| Lint 检查 | `mcp__soc-build__soc_lint` |
-| YAML/Excel → regfile | `mcp__soc-build__yml2reg` / `excel_yml_gen` |
-| CRG 生成 | `mcp__soc-build__crg_gen` |
-| IO/Pad 生成 | `mcp__soc-build__io_top_gen` |
-| Memory Map 生成 | `mcp__soc-build__gen_asic_memmap` |
-| Memory wrapper | `mcp__soc-build__gen_memwrap` |
-| 端口表 CSV 导出 | `mcp__soc-build__soc_csv` |
+| 任务 | Skill | Tool |
+|---|---|---|
+| 项目脚手架 | `soc-build` | `soc_init` / `soc_add_chip` / `soc_add_ip` |
+| 生成 filelist | `soc-build` | `soc_flist` |
+| Lint 检查 | `soc-build` | `soc_lint` |
+| 编译仿真 | `soc-build` | `soc_comp` |
+| 提取 Verilog 模块端口 | `soc-integrate` | `soc_extract` |
+| 实例化代码生成 | `soc-integrate` | `soc_instantiate` |
+| 顶层模块集成 | `soc-integrate` | `soc_integrate` |
+| 信号 wrapper | `soc-integrate` | `soc_wrap` |
+| 端口表 CSV 导出 | `soc-integrate` | `soc_csv` |
+| 端口快照 / 变更追踪 | `soc-integrate` | `soc_snapshot` / `soc_diff` / `soc_update` |
+| 顶层端口连接提取 | `soc-integrate` | `soc_extract_map` |
+| 删除模块并刷新顶层 | `soc-integrate` | `soc_remove` |
+| YAML → 寄存器 RTL | `yml2reg` | `yml2reg` |
+| Excel 寄存器表 → YAML | `excel-yml-gen` | `excel_yml_gen` |
+| CRG 需求表 → 设计表 | `crg-req-to-design` | `crg_req_to_design` |
+| 时钟/复位拓扑图 | `cr-tree-diag-gen` | `cr_tree_diag_gen` / `cr_tree_diag_gen_drawio` / `cr_tree_diag_gen_excalidraw` |
+
+> 注：`crg_gen`（CRG RTL 生成）、`io_top_gen`（IO/Pad 生成）、`gen_asic_memmap`（Memory Map 生成）、`gen_memwrap`（Memory Wrapper 生成）等工具属于 `crg-gen` skill，当前未在 plugin.json 注册，如需使用请手动添加。
 
 ## EDA 工具底层
 
@@ -35,7 +37,7 @@
 
 Lint 检查**禁止**直接调用 `verilator --lint-only <single-file>`。必须通过以下方式之一执行:
 
-1. **`mcp__soc-build__soc_lint`**(MCP 工具,优先)
+1. **`mcp__plugin_silicon-crew_soc-build__soc_lint`**(MCP 工具,优先)
 2. **项目 `make lint`**(如 `make lint [RTL_TOP=xxx]`)
 
 严禁的行为包括且不限于:
@@ -54,7 +56,7 @@ RTL 写完后,**必须通过项目 make lint 再次验证**,以实际 make lint 
 
 编译仿真**禁止**直接调用 `iverilog <single-file>` 或 `vvp <outfile>`。必须通过以下方式之一执行:
 
-1. **`mcp__soc-build__soc_comp`**(MCP 工具,优先)
+1. **`mcp__plugin_silicon-crew_soc-build__soc_comp`**(MCP 工具,优先)
 2. **项目 `make sim`**(如 `make sim SIMULATOR=iverilog TOP_MODULE=tb_xxx`)
 
 严禁的行为包括且不限于:
