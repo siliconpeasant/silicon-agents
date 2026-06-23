@@ -67,7 +67,7 @@ def main():
     try:
         import pandas as pd
     except ImportError:
-        print("Error: pandas is required. Install with: pip install pandas openpyxl")
+        print("Error: runtime dependencies missing; run scripts/setup_mcp_env.sh")
         sys.exit(1)
 
     clock_df = pd.DataFrame(clock_result["clock_rows"]).fillna("")

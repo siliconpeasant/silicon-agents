@@ -1,27 +1,18 @@
 ---
 name: excel-yml-gen
-description: 从 Excel 寄存器描述生成 YAML 和 Verilog regfile。
+description: Generate YAML and Verilog register-file artifacts from a structured Excel register workbook. Use when the approved register source is an Excel sheet.
 ---
 
-### 3.2 Excel → YML/RTL — `excel_yml_gen.py`
+# Excel to YAML/Register RTL
 
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/excel-yml-gen/scripts/excel_yml_gen.py <excel> <sheet_name> [output_dir]
-```
+Call the registered `excel_yml_gen` MCP tool with `excel_file`, `sheet_name`, and optional `output_dir`. If omitted, output goes to `<excel-stem>_generated/` beside the workbook, never inside the plugin package.
 
-从 Excel 寄存器描述生成 YAML 和 Verilog regfile。
+Workbook sheets:
 
-**sheet 命名约定**：
-- `<name>` — 主配置 sheet（component name / protocol / base address）
-- `<name>_reg` — 寄存器定义 sheet
-- `<name>_intp` — 中断定义 sheet（可选）
+- `<name>`: component/protocol/base-address configuration
+- `<name>_reg`: register definitions
+- `<name>_intp`: optional interrupts
 
-传入 `<name>_reg` 时脚本会自动去掉 `_reg` 后缀，读取三个 sheet。
+Passing `<name>_reg` automatically selects the three-sheet group. Outputs include YAML, bus register-file RTL, an instance wrapper, and a TDR buffer list. Use `references/excel2yml_demo.xlsx` as the format example.
 
-**输出**：
-- `<NAME>.yml` — 寄存器描述 YAML
-- `<NAME>_apb_regfile.v` — 寄存器 RTL
-- `<name>_reg_inst.v` — 实例化 wrapper
-- `<name>_tdr_buf_list.txt`
-
-Excel 模板：`references/excel2yml_demo.xlsx`
+Generation uses argument-vector subprocess execution; never reintroduce shell-string execution for paths supplied by users.

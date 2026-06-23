@@ -1,173 +1,55 @@
-# Pipeline State 机制 (强制)
+# Pipeline state contract
 
-每个独立模块开发需求必须有一个 `pipeline_state.json`,作为**单一事实来源**(single source of truth)记录 4 阶段状态。
+Every independently developed module or IP package owns `pipeline_state.json` at its workspace root. It is a validated coordination signal, not an informal log.
 
-## 文件位置
+## Initialization
 
-放在**模块或 IP 包根目录**,例如:
-- `ip/digital/timer/pipeline_state.json` (单模块)
-- `ip/digital/soc_ip_common/pipeline_state.json` (多子模块 IP 包)
-- `chip/core/pipeline_state.json`
+Single module:
 
-禁止放在临时目录或 agent 私有目录。
-
-## 两种模式
-
-### 单模块模式 (默认)
-
-一个 `pipeline_state.json` 管理一个模块的 4 阶段:
 ```bash
-python3 init_state.py ./ip/digital/timer timer
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/init_state.py <workspace> <module>
 ```
 
-### 多子模块模式 (IP 包)
+Multi-module package:
 
-一个 `pipeline_state.json` 管理一个 IP 目录下的多个独立子模块:
 ```bash
-python3 init_state.py ./ip/digital/soc_ip_common \
-  --submodules "clk_divider,std_cell_and,std_cell_mux,rst_synchronizer" \
-  soc_ip_common
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/init_state.py <workspace> <package> \
+  --submodules "module_a,module_b"
 ```
 
-适用场景:
-- `soc_ip_common` 这种包含 clk_gen / rst_gen / std_cell 多个子模块的 IP
-- 每个子模块有独立的 rtl/tb/syn
-- 整个目录用一个 state 文件统一把控
+Initialization refuses to overwrite existing state unless `--force` is explicitly supplied.
 
-**更新时必须指定 `--module`**:
+## Transitions
+
+```text
+blocked -> pending -> in_progress -> done
+                                \-> fail -> in_progress
+pending -> skipped              (documented doc-stage exception only)
+```
+
+- Dependencies are `doc -> rtl -> {verif, syn}`; `done` and `skipped` satisfy dependencies.
+- Agents mark their stage `in_progress` before work.
+- `done` requires existing, non-empty relative artifact paths and at least one passing check. Any failed check makes `done` invalid.
+- `fail` requires a failed check and remediation note.
+- `blocked` is dependency-derived and cannot be set manually.
+- Writes are locked and atomic. Repeated `--check` options are preserved.
+
+Example:
+
 ```bash
-python3 update_state.py ./ip/digital/soc_ip_common --module rst_synchronizer rtl done \
-  --artifacts "de/rtl/rst_gen/rst_synchronizer.v,..."
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <workspace> rtl in_progress
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <workspace> rtl done \
+  --artifacts "de/rtl/mod.v,de/rtl/filelist.f,de/syn/mod.sdc" \
+  --check "soc_lint:passed:0 warning" \
+  --check "rtl_quality:passed"
 ```
 
-## 状态生命周期
+For multi-module mode add `--module <module>`.
 
-### 创建
+Before dispatching a stage and immediately after a role agent returns, the coordinator runs:
 
-主 Agent 接到"设计 xxx 模块"需求后,**第一步**必须调用:
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/init_state.py <module_dir> [module_name]
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/query_state.py <workspace>
 ```
 
-### 状态流转
-
-```
-pending → in_progress → done
-              ↓
-             fail
-```
-
-| 状态 | 含义 | 下游影响 |
-|------|------|----------|
-| `pending` | 等待启动 | 无 |
-| `in_progress` | agent 正在工作 | 无 |
-| `done` | 产物 + check 都 PASS | 解阻塞下游阶段 |
-| `fail` | 产物或 check 不通过 | **阻塞整个流水线**,需修复后重试 |
-| `blocked` | 上游依赖未完成 | 依赖全部 `done` 后自动变为 `pending` |
-
-### 更新
-
-每个 subagent **完成后必须**调用:
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <module_dir> <step> <status> [options]
-```
-
-**示例**:
-```bash
-# RTL 完成,lint clean
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py ./ip/digital/timer rtl done \
-  --artifacts "de/rtl/timer.v,de/rtl/rtl.f,de/constraints/base.sdc" \
-  --check "lint:passed:verilator -Wall 0 warn 0 error"
-
-# 验证失败
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py ./ip/digital/timer verif fail \
-  --check "sim:failed:17 errors in TC-003" \
-  --note "race condition at posedge clk, need #delay before check()"
-```
-
-### 查询
-
-主 Agent 在 spawn 下一个 agent 前,**必须**先查询状态:
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/query_state.py <module_dir>
-```
-
-根据输出决定:
-- `next_actions` 为空 → 检查是否有 `fail`,有则报告用户;无则全部完成
-- `next_actions` 有多个 → 按依赖顺序串行,无依赖的并行 spawn
-
-## 各阶段依赖关系
-
-```
-doc ──→ rtl ──→ verif
-          └────→ syn
-```
-
-- `rtl` 依赖 `doc`
-- `verif` 依赖 `rtl`
-- `syn` 依赖 `rtl`
-
-## Agent 强制步骤 (追加到各 agent 定义的末尾)
-
-每个 subagent 在完成"自检"步骤后、"报告"步骤前,**必须**插入:
-
-```
-N. **更新 pipeline_state**:
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <module_dir> <step> done \
-     --artifacts "<相对路径1>,<相对路径2>" \
-     --check "<tool>:passed:<备注>"
-```
-
-如果自检失败,更新为 `fail`:
-```
-N. **更新 pipeline_state**:
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/update_state.py <module_dir> <step> fail \
-     --check "<tool>:failed:<失败原因>" \
-     --note "<修复建议>"
-```
-
-## 主 Agent 调度规范
-
-1. **创建模块时**:先 `init_state.py`,再按 `next_actions` spawn agent
-2. **agent 返回后**:先 `query_state.py` 确认状态,再决定下一步
-3. **遇到 fail**:停止自动推进,向用户报告失败阶段 + 原因 + 建议
-4. **禁止**:跳过 state 查询直接 spawn agent,或 agent 跳过 state 更新直接返回
-
-### Spawn prompt 必备字段(❗ 主 Agent 强制项)
-
-主 Agent 在 spawn 任何 subagent 时,prompt 里**必须**显式包含以下三项,否则 subagent 的 update_state 会落到错误路径或被跳过:
-
-```
-- workspace: <绝对路径,例如 /Users/.../ip/digital/soc_ip_common/>
-- 模块名: <task_name>(多子模块 IP 包时必填,单模块可省略)
-- 完成约束: "完成后必须调用 update_state.py 更新对应 module/step,完成报告里必须列出 update_state 的 stdout 一行"
-```
-
-### 主 Agent 收到 subagent 回报后
-
-必须**立即**调用 `query_state.py` 验证 state 真的被更新了(状态变成 done、artifacts 非空)。**禁止**:
-- 攒到所有阶段完成再统一写 state(state 是协作信号,不是事后日志)
-- 假设 subagent 一定调了 update_state.py(报告里没看到 stdout 就当没调,主 Agent 补写)
-- 把"更新 pipeline_state"作为 TaskList 尾部独立 task —— 它是每阶段 in_progress→completed 的**内置副作用**,不是单独工作项
-
-## 已集成 state 更新的 agent 清单
-
-| Agent | 阶段 | state 更新位置 |
-|-------|------|---------------|
-| soc-doc-engineer | doc | 自检 `check_doc_completeness` 之后 |
-| soc-rtl-designer | rtl | 自检 `check_rtl_quality` + lint 之后 |
-| soc-crg-engineer | rtl (特化) | crg_gen 产出整理 + lint + `check_rtl_quality` 之后 |
-| soc-integrator | rtl (顶层特化) | soc_integrate 产出 + elab + lint + `check_rtl_quality` 之后 |
-| soc-verification-engineer | verif | 自检 `check_sim_pass` 之后 |
-| soc-synthesis-engineer | syn | 自检 `check_timing` 之后 |
-
-## 集成场景的 state 处理
-
-当存在顶层集成(`soc-integrator`)时:
-
-- **子模块** workspace 各自维护独立的 `pipeline_state.json`(单模块模式或多子模块 IP 包模式皆可)
-- **顶层** workspace 独立一份 `pipeline_state.json`,模块名 = `top_name`,4 阶段照常
-- 顶层 rtl 阶段由 `soc-integrator` 完成(初始化 + 直接标记 done),后续 verify / syn 用通用 agent
-- `soc-integrator` 的依赖是**子模块的 rtl 阶段 done**,不依赖子模块的 verify / syn —— 这两者可与集成**并行**进行
-- 集成时主 Agent 必须显式传入子模块 workspace 路径,不读子模块 state(state 是各 workspace 的私有产物)
-- **子模块文件不复制到顶层**:integrator 用 MCP `soc_add_chip` 在 silicon-crew 项目的 `chip/<top>/` 下创建标准模块目录,然后 Edit 该目录下的 `de/rtl/filelist.mk` 插入 `include $(PROJECT_ROOT)/<子模块>/de/rtl/filelist.mk` 行(skill 模板的依赖区块)。子模块 filelist.mk 内部的 include guard + `MODULE_FILELISTS` 去重机制自动处理依赖链。子模块 RTL 保留在原 workspace,`make comp` 时由 `common.mk` 把 `$(MODULE_FILELISTS)` 展开 cat 成 dut.f
+Each dispatch prompt must include the absolute workspace, module name, state mode, and requirement to report the `update_state.py` stdout line. A failed stage blocks new dispatch until retried.

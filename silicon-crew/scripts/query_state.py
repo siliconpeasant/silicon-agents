@@ -9,7 +9,7 @@ import os
 
 
 def _icon(status: str) -> str:
-    return {"done": "✅", "fail": "❌", "in_progress": "⏳",
+    return {"done": "✅", "skipped": "⏭️", "fail": "❌", "in_progress": "⏳",
             "blocked": "🚫", "pending": "⬜"}.get(status, "❓")
 
 
@@ -29,7 +29,7 @@ def _print_pipeline(pipeline: dict, indent: str = "  "):
 
 def _print_stats(pipeline: dict) -> tuple:
     total = len(pipeline)
-    done = sum(1 for s in pipeline.values() if s.get("status") == "done")
+    done = sum(1 for s in pipeline.values() if s.get("status") in {"done", "skipped"})
     fail = sum(1 for s in pipeline.values() if s.get("status") == "fail")
     return total, done, fail
 

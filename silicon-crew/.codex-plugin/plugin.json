@@ -1,0 +1,45 @@
+{
+  "name": "silicon-crew",
+  "version": "1.0.0+codex.20260622111128",
+  "description": "Gated SoC front-end design toolkit with pipeline orchestration, RTL verification/synthesis roles, integration, register generation, CRG design, and MCP-backed EDA execution.",
+  "author": {
+    "name": "Silicon Peasant",
+    "url": "https://github.com/siliconpeasant"
+  },
+  "homepage": "https://github.com/siliconpeasant/silicon-agents",
+  "repository": "https://github.com/siliconpeasant/silicon-agents",
+  "keywords": [
+    "soc",
+    "rtl",
+    "verilog",
+    "verification",
+    "synthesis",
+    "multi-agent",
+    "skill",
+    "mcp",
+    "clock-tree",
+    "reset-tree",
+    "diagram",
+    "siliconpeasant"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Silicon Crew",
+    "shortDescription": "SoC RTL, verification, synthesis, CRG, integration, and register-generation tools.",
+    "longDescription": "Silicon Crew provides a validated doc-to-RTL pipeline, MCP-only lint/simulation/synthesis execution, top integration, clock/reset design tools, and YAML/Excel register generation.",
+    "developerName": "Silicon Peasant",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/siliconpeasant/silicon-agents",
+    "defaultPrompt": [
+      "Create a SoC RTL project skeleton.",
+      "Integrate these RTL modules into a top level.",
+      "Generate registers from this YAML spec."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

@@ -1,4 +1,7 @@
 # =============================================================================
+
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
 # Common Makefile for SoC Project Simulation
 # =============================================================================
 # 使用方式：在子 Makefile 中定义以下变量，然后 include 本文件
@@ -116,7 +119,7 @@ comp:
 	@mkdir -p $(SIM_DIR)
 	$(COMP_CMD)
 
-sim:
+sim: comp
 	@echo "[SIM] Running $(TOP_MODULE) ..."
 	@mkdir -p $(SIM_DIR)
 	$(SIM_CMD) | tee $(SIM_DIR)/sim.log

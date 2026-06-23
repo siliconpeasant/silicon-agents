@@ -3,6 +3,7 @@
 import sys
 import os
 import re
+import subprocess
 import pandas as pd
 from datetime import datetime
 import getpass
@@ -110,13 +111,13 @@ def main():
 
     fp.close()
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    yml2reg_py = os.path.join(script_dir, "yml2reg", "yml2reg.py")
+    plugin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    yml2reg_py = os.path.join(plugin_root, "skills", "yml2reg", "scripts", "yml2reg.py")
     yml_file = os.path.abspath(out_dir+gen_file_name.upper()+".yml")
     protocol = xml_corpus[0][5]
-    gen_regfile = "cd "+out_dir+" && python3 "+yml2reg_py+" "+yml_file+" "+protocol
-    print(gen_regfile)
-    os.system(gen_regfile)
+    command = [sys.executable, yml2reg_py, yml_file, protocol]
+    print(" ".join(command))
+    subprocess.run(command, cwd=os.path.abspath(out_dir), check=True)
 
 
 # excel_gen_xml{{{
@@ -667,4 +668,3 @@ def help():
 
 if __name__ == "__main__":
     main()
-

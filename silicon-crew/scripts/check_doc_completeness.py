@@ -1,25 +1,59 @@
 #!/usr/bin/env python3
-"""检查文档完整性：design_spec, interface_spec, regmap 是否存在"""
-import sys, os, json
+"""Validate the canonical documentation deliverables for one module."""
 
-def check(workspace: str) -> dict:
-    required = {
-        "design_spec": "docs/design_spec.md",
-        "interface_spec": "docs/interface_spec.md",
-        "regmap": "docs/regmap.md"
-    }
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+REQUIRED_DOCS = (
+    "design_spec.md",
+    "interface_spec.md",
+    "regmap.md",
+    "verification_plan.md",
+)
+
+
+def check(workspace: str, module: str = "") -> dict:
+    root = Path(workspace).expanduser().resolve()
+    docs_dir = root / "docs" / module if module else root / "docs"
     results = {}
-    all_pass = True
-    for name, rel in required.items():
-        path = os.path.join(workspace, rel)
-        exists = os.path.exists(path)
-        results[name] = {"path": rel, "exists": exists}
+    issues = []
+    for filename in REQUIRED_DOCS:
+        path = docs_dir / filename
+        exists = path.is_file()
+        nonempty = exists and path.stat().st_size > 0
+        has_heading = False
+        if nonempty:
+            first = next((line.strip() for line in path.read_text(errors="replace").splitlines() if line.strip()), "")
+            has_heading = first.startswith("# ")
+        rel = str(path.relative_to(root))
+        results[filename] = {
+            "path": rel,
+            "exists": exists,
+            "nonempty": nonempty,
+            "has_heading": has_heading,
+        }
         if not exists:
-            all_pass = False
-    return {"passed": all_pass, "details": results}
+            issues.append(f"missing document: {rel}")
+        elif not nonempty:
+            issues.append(f"empty document: {rel}")
+        elif not has_heading:
+            issues.append(f"document must start with a Markdown heading: {rel}")
+    return {"passed": not issues, "details": results, "issues": issues}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("workspace")
+    parser.add_argument("--module", default="")
+    args = parser.parse_args()
+    result = check(args.workspace, args.module)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0 if result["passed"] else 1
+
 
 if __name__ == "__main__":
-    ws = sys.argv[1] if len(sys.argv) > 1 else "."
-    result = check(ws)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
-    sys.exit(0 if result["passed"] else 1)
+    raise SystemExit(main())

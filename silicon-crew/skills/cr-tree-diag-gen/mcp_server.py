@@ -40,35 +40,41 @@ mcp = FastMCP(
 def _generate(input_path: str, output_path: str = None, output_dir: str = None) -> str:
     """核心生成逻辑"""
     # 延迟导入，避免 MCP 启动时加载失败
-    from scripts.parser import CrgExcelParser
-    from scripts.graph import Graph
-    from scripts.layout import HierarchicalLayout
-    from scripts.renderer import DrawioRenderer
-    from scripts.excalidraw_renderer import ExcalidrawRenderer
+    try:
+        from scripts.parser import CrgExcelParser
+        from scripts.graph import Graph
+        from scripts.layout import HierarchicalLayout
+        from scripts.renderer import DrawioRenderer
+        from scripts.excalidraw_renderer import ExcalidrawRenderer
+    except ImportError as exc:
+        raise RuntimeError(
+            "missing diagram runtime dependencies; run scripts/setup_mcp_env.sh"
+        ) from exc
 
-    if not os.path.exists(input_path):
-        return f"Error: Input file not found: {input_path}"
+    input_file = Path(input_path).expanduser().resolve()
+    if not input_file.is_file():
+        raise ValueError(f"input file not found: {input_file}")
 
     # 推导输出路径
     if output_path:
         output_paths = [output_path]
     else:
-        input_stem = os.path.splitext(os.path.basename(input_path))[0]
+        input_stem = input_file.stem
         if input_stem.endswith("_table"):
             output_stem = input_stem[:-6] + "_tree"
         else:
             output_stem = input_stem + "_tree"
         if output_dir:
-            output_dir_path = output_dir
+            output_dir_path = str(Path(output_dir).expanduser().resolve())
         else:
-            output_dir_path = str(SCRIPT_DIR / "examples" / "output")
+            output_dir_path = str(input_file.parent / f"{input_stem}_diagram")
         output_paths = [
             os.path.join(output_dir_path, output_stem + ".drawio"),
             os.path.join(output_dir_path, output_stem + ".excalidraw"),
         ]
 
     # 解析
-    parser = CrgExcelParser(input_path)
+    parser = CrgExcelParser(str(input_file))
     rows = parser.parse()
     summary = parser.get_summary(rows)
 
@@ -129,7 +135,7 @@ def cr_tree_diag_gen(input_path: str, output_dir: str = None) -> str:
 
     Args:
         input_path: 输入 Excel 文件路径（.xlsx），时钟树或复位树表格
-        output_dir: 输出目录，留空则使用内置 output/ 目录
+        output_dir: 输出目录；留空则在输入同级创建 <stem>_diagram
     """
     return _generate(input_path, output_dir=output_dir)
 
@@ -143,12 +149,13 @@ def cr_tree_diag_gen_drawio(input_path: str, output_path: str = None) -> str:
         output_path: 输出文件路径（.drawio），留空则自动推导
     """
     if not output_path:
-        input_stem = os.path.splitext(os.path.basename(input_path))[0]
+        input_file = Path(input_path).expanduser().resolve()
+        input_stem = input_file.stem
         if input_stem.endswith("_table"):
             output_stem = input_stem[:-6] + "_tree"
         else:
             output_stem = input_stem + "_tree"
-        output_path = os.path.join(str(SCRIPT_DIR / "examples" / "output"), output_stem + ".drawio")
+        output_path = str(input_file.parent / f"{input_stem}_diagram" / (output_stem + ".drawio"))
     return _generate(input_path, output_path=output_path)
 
 
@@ -161,12 +168,13 @@ def cr_tree_diag_gen_excalidraw(input_path: str, output_path: str = None) -> str
         output_path: 输出文件路径（.excalidraw），留空则自动推导
     """
     if not output_path:
-        input_stem = os.path.splitext(os.path.basename(input_path))[0]
+        input_file = Path(input_path).expanduser().resolve()
+        input_stem = input_file.stem
         if input_stem.endswith("_table"):
             output_stem = input_stem[:-6] + "_tree"
         else:
             output_stem = input_stem + "_tree"
-        output_path = os.path.join(str(SCRIPT_DIR / "examples" / "output"), output_stem + ".excalidraw")
+        output_path = str(input_file.parent / f"{input_stem}_diagram" / (output_stem + ".excalidraw"))
     return _generate(input_path, output_path=output_path)
 
 

@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "soc-build": {
+      "command": "/bin/sh",
+      "cwd": ".",
+      "args": [
+        "./scripts/run_mcp_python.sh",
+        "./skills/soc-build/mcp_server.py"
+      ]
+    },
+    "soc-integrate": {
+      "command": "/bin/sh",
+      "cwd": ".",
+      "args": [
+        "./scripts/run_mcp_python.sh",
+        "./skills/soc-integrate/mcp_server.py"
+      ]
+    },
+    "yml2reg": {
+      "command": "/bin/sh",
+      "cwd": ".",
+      "args": [
+        "./scripts/run_mcp_python.sh",
+        "./skills/yml2reg/mcp_server.py"
+      ]
+    },
+    "excel-yml-gen": {
+      "command": "/bin/sh",
+      "cwd": ".",
+      "args": [
+        "./scripts/run_mcp_python.sh",
+        "./skills/excel-yml-gen/mcp_server.py"
+      ]
+    },
+    "crg-req-to-design": {
+      "command": "/bin/sh",
+      "cwd": ".",
+      "args": [
+        "./scripts/run_mcp_python.sh",
+        "./skills/crg-req-to-design/mcp_server.py"
+      ]
+    },
+    "cr-tree-diag-gen": {
+      "command": "/bin/sh",
+      "cwd": ".",
+      "args": [
+        "./scripts/run_mcp_python.sh",
+        "./skills/cr-tree-diag-gen/mcp_server.py"
+      ]
+    }
+  }
+}

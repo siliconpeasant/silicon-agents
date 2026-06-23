@@ -1,162 +1,228 @@
 #!/usr/bin/env python3
-"""
-更新模块或 IP 包 pipeline_state.json 中指定阶段的状态。
+"""Apply validated, atomic transitions to pipeline_state.json."""
 
-单模块模式:
-  python3 update_state.py <module_dir> <step> <status> [options]
+from __future__ import annotations
 
-多子模块模式(IP 包):
-  python3 update_state.py <ip_dir> --module <submodule> <step> <status> [options]
-
-Options:
-  --artifacts "file1,file2"     产物文件列表(逗号分隔,相对模块根目录)
-  --check "tool:passed[:note]"   检查结果
-  --note "备注文本"
-"""
-import sys
+import argparse
+import fcntl
 import json
 import os
-import argparse
-from datetime import datetime, timezone
+import tempfile
+from pathlib import Path
+
+from pipeline_state import (
+    DEPENDENCIES,
+    SUCCESS_STATES,
+    compute_next_actions,
+    dependencies_satisfied,
+    now,
+    parse_check,
+    recompute_blocked,
+)
 
 
-def _new_pipeline() -> dict:
-    """兼容旧版 state.json 的 pipeline 结构初始化。"""
-    return {
-        "doc": {"step_id": "doc", "name": "设计文档编写", "agent": "soc-doc-engineer",
-                "status": "pending", "started_at": None, "completed_at": None,
-                "artifacts": [], "check_results": [], "notes": ""},
-        "rtl": {"step_id": "rtl", "name": "RTL设计与编码", "agent": "soc-rtl-designer",
-                "status": "pending", "started_at": None, "completed_at": None,
-                "artifacts": [], "check_results": [], "notes": ""},
-        "verif": {"step_id": "verif", "name": "验证环境搭建与仿真", "agent": "soc-verification-engineer",
-                  "status": "pending", "started_at": None, "completed_at": None,
-                  "artifacts": [], "check_results": [], "notes": ""},
-        "syn": {"step_id": "syn", "name": "逻辑综合与时序分析", "agent": "soc-synthesis-engineer",
-                "status": "pending", "started_at": None, "completed_at": None,
-                "artifacts": [], "check_results": [], "notes": ""},
-    }
+ALLOWED_TRANSITIONS = {
+    "pending": {"in_progress", "skipped"},
+    "blocked": {"pending", "skipped"},
+    "in_progress": {"done", "fail"},
+    "fail": {"in_progress"},
+    "done": {"in_progress"},
+    "skipped": {"in_progress"},
+}
 
 
-def _recompute_blocked(pipeline: dict):
-    for step_name, step_info in pipeline.items():
-        if step_info.get("status") != "blocked":
-            continue
-        blocked_by = step_info.get("blocked_by", [])
-        if not blocked_by:
-            continue
-        all_done = all(pipeline.get(dep, {}).get("status") == "done" for dep in blocked_by)
-        if all_done:
-            step_info["status"] = "pending"
-            step_info["blocked_by"] = []
+def _artifact_paths(workspace: Path, artifacts: list[str]) -> list[str]:
+    validated = []
+    for item in artifacts:
+        rel = Path(item.strip())
+        if not item.strip() or rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"artifact must be a relative workspace path: {item}")
+        path = (workspace / rel).resolve()
+        try:
+            path.relative_to(workspace)
+        except ValueError as exc:
+            raise ValueError(f"artifact escapes workspace: {item}") from exc
+        if not path.exists():
+            raise ValueError(f"artifact does not exist: {item}")
+        if path.is_file() and path.stat().st_size == 0:
+            raise ValueError(f"artifact is empty: {item}")
+        validated.append(rel.as_posix())
+    return validated
 
 
-def _compute_next_actions(pipeline: dict) -> list:
-    actions = []
-    deps_map = {
-        "rtl": ["doc"],
-        "verif": ["rtl"],
-        "syn": ["rtl"],
-    }
-    for step_name, step_info in pipeline.items():
-        status = step_info.get("status")
-        if status == "fail":
-            actions.append({"stage": step_name, "action": "fix_and_retry",
-                            "reason": f"{step_name} failed, needs fix before proceeding"})
-        elif status == "pending":
-            deps = deps_map.get(step_name, [])
-            deps_done = all(pipeline.get(d, {}).get("status") == "done" for d in deps)
-            if deps_done:
-                actions.append({"stage": step_name, "action": f"spawn {step_info['agent']}",
-                                "reason": f"dependencies {deps} satisfied, ready to start {step_name}"})
-    return actions
+def _validate_transition(pipeline: dict, stage: str, target: str, note: str) -> None:
+    current = pipeline[stage].get("status", "pending")
+    if target not in ALLOWED_TRANSITIONS.get(current, set()):
+        raise ValueError(f"invalid transition for {stage}: {current} -> {target}")
+    if target == "in_progress" and not dependencies_satisfied(pipeline, stage):
+        raise ValueError(f"dependencies not satisfied for {stage}: {list(DEPENDENCIES[stage])}")
+    if target == "skipped" and not note:
+        raise ValueError("skipped status requires --note with the applicable exception")
+    if target == "skipped" and stage != "doc":
+        raise ValueError("only the doc stage may be skipped")
 
 
-def update_pipeline(pipeline: dict, step: str, status: str,
-                    artifacts: list = None, check: str = None, note: str = None):
-    if step not in pipeline:
-        # 兼容旧版可能缺失阶段的情况
-        pipeline[step] = _new_pipeline()[step]
+def _apply_transition(
+    pipeline: dict,
+    workspace: Path,
+    stage: str,
+    status: str,
+    artifacts: list[str],
+    checks: list[str],
+    note: str,
+) -> None:
+    _validate_transition(pipeline, stage, status, note)
+    info = pipeline[stage]
+    parsed_checks = [parse_check(item) for item in checks]
 
-    step_data = pipeline[step]
-    step_data["status"] = status
-    step_data["last_updated"] = _now()
+    if status == "in_progress":
+        info.update(
+            {
+                "status": status,
+                "started_at": now(),
+                "completed_at": None,
+                "artifacts": [],
+                "check_results": [],
+                "notes": note or "",
+                "blocked_by": [],
+            }
+        )
+    elif status == "done":
+        if not artifacts:
+            raise ValueError("done status requires --artifacts")
+        validated_artifacts = _artifact_paths(workspace, artifacts)
+        if not parsed_checks:
+            raise ValueError("done status requires at least one --check")
+        failed = [entry for entry in parsed_checks if not entry["passed"]]
+        if failed:
+            raise ValueError(f"done status cannot contain failed checks: {failed}")
+        info.update(
+            {
+                "status": status,
+                "completed_at": now(),
+                "artifacts": validated_artifacts,
+                "check_results": parsed_checks,
+                "notes": note or info.get("notes", ""),
+            }
+        )
+    elif status == "fail":
+        if not parsed_checks or all(entry["passed"] for entry in parsed_checks):
+            raise ValueError("fail status requires at least one failed --check")
+        info.update(
+            {
+                "status": status,
+                "completed_at": now(),
+                "check_results": parsed_checks,
+                "notes": note or info.get("notes", ""),
+            }
+        )
+    elif status == "skipped":
+        info.update(
+            {
+                "status": status,
+                "completed_at": now(),
+                "artifacts": [],
+                "check_results": [],
+                "notes": note,
+                "blocked_by": [],
+            }
+        )
+    elif status == "pending":
+        info["status"] = "pending"
+        info["blocked_by"] = []
 
-    if status == "in_progress" and step_data.get("started_at") is None:
-        step_data["started_at"] = _now()
-    if status in ("done", "fail") and step_data.get("completed_at") is None:
-        step_data["completed_at"] = _now()
-
-    if artifacts:
-        step_data["artifacts"] = [a.strip() for a in artifacts.split(",") if a.strip()]
-    if check:
-        parts = check.split(":", 2)
-        check_entry = {"tool": parts[0],
-                       "passed": parts[1].lower() in ("passed", "pass", "true", "yes") if len(parts) > 1 else None,
-                       "note": parts[2] if len(parts) > 2 else ""}
-        step_data.setdefault("check_results", []).append(check_entry)
-    if note:
-        step_data["notes"] = note
-
-    _recompute_blocked(pipeline)
+    info["last_updated"] = now()
+    recompute_blocked(pipeline)
 
 
-def update_state(module_dir: str, step: str, status: str,
-                 submodule: str = None, artifacts: list = None,
-                 check: str = None, note: str = None) -> str:
-    module_dir = os.path.abspath(module_dir)
-    state_path = os.path.join(module_dir, "pipeline_state.json")
-
-    if not os.path.exists(state_path):
-        raise FileNotFoundError(f"State file not found: {state_path}. Run init_state.py first.")
-
-    with open(state_path, "r", encoding="utf-8") as f:
-        state = json.load(f)
-
-    mode = state.get("mode", "single")
-
-    if mode == "multi_module":
-        if not submodule:
-            raise ValueError("This is a multi-module IP. Use --module <submodule> to specify which module to update.")
-        if submodule not in state["modules"]:
-            raise ValueError(f"Submodule '{submodule}' not found. Available: {list(state['modules'].keys())}")
-        pipeline = state["modules"][submodule]["pipeline"]
-        update_pipeline(pipeline, step, status, artifacts, check, note)
-        state["modules"][submodule]["next_actions"] = _compute_next_actions(pipeline)
-    else:
-        pipeline = state["pipeline"]
-        update_pipeline(pipeline, step, status, artifacts, check, note)
-        state["next_actions"] = _compute_next_actions(pipeline)
-
-    state["last_updated"] = _now()
-
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-
-    return state_path
+def _atomic_write(path: Path, state: dict) -> None:
+    fd, temp_name = tempfile.mkstemp(prefix=".pipeline_state.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def update_state(
+    module_dir: str,
+    stage: str,
+    status: str,
+    *,
+    submodule: str | None = None,
+    artifacts: list[str] | None = None,
+    checks: list[str] | None = None,
+    note: str = "",
+) -> str:
+    workspace = Path(module_dir).expanduser().resolve()
+    state_path = workspace / "pipeline_state.json"
+    if not state_path.is_file():
+        raise FileNotFoundError(f"state file not found: {state_path}; run init_state.py first")
+
+    lock_path = workspace / ".pipeline_state.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        state = json.loads(state_path.read_text())
+        if state.get("mode", "single") == "multi_module":
+            if not submodule:
+                raise ValueError("multi-module state requires --module")
+            if submodule not in state.get("modules", {}):
+                raise ValueError(f"unknown submodule: {submodule}")
+            module_state = state["modules"][submodule]
+            pipeline = module_state["pipeline"]
+            _apply_transition(
+                pipeline, workspace, stage, status, artifacts or [], checks or [], note
+            )
+            module_state["next_actions"] = compute_next_actions(pipeline)
+        else:
+            pipeline = state["pipeline"]
+            _apply_transition(
+                pipeline, workspace, stage, status, artifacts or [], checks or [], note
+            )
+            state["next_actions"] = compute_next_actions(pipeline)
+        state["schema_version"] = 2
+        state["workspace"] = str(workspace)
+        state["last_updated"] = now()
+        _atomic_write(state_path, state)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    return str(state_path)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Update pipeline state")
+    parser.add_argument("module_dir")
+    parser.add_argument("stage", choices=["doc", "rtl", "verif", "syn"])
+    parser.add_argument(
+        "status",
+        choices=["pending", "in_progress", "done", "fail", "blocked", "skipped"],
+    )
+    parser.add_argument("--module")
+    parser.add_argument("--artifacts", default="")
+    parser.add_argument("--check", action="append", default=[])
+    parser.add_argument("--note", default="")
+    args = parser.parse_args()
+    if args.status == "blocked":
+        parser.error("blocked is dependency-derived and cannot be set directly")
+    artifacts = [item.strip() for item in args.artifacts.split(",") if item.strip()]
+    path = update_state(
+        args.module_dir,
+        args.stage,
+        args.status,
+        submodule=args.module,
+        artifacts=artifacts,
+        checks=args.check,
+        note=args.note,
+    )
+    suffix = f" [{args.module}]" if args.module else ""
+    print(f"Updated pipeline_state.json:{suffix} {args.stage} -> {args.status}")
+    print(f"State: {path}")
+    return 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Update pipeline state")
-    parser.add_argument("module_dir", help="模块或 IP 包根目录")
-    parser.add_argument("step", choices=["doc", "rtl", "verif", "syn"], help="阶段名")
-    parser.add_argument("status", choices=["pending", "in_progress", "done", "fail", "blocked"], help="状态")
-    parser.add_argument("--module", default=None, help="子模块名(多模块 IP 包时必须)")
-    parser.add_argument("--artifacts", default=None, help="产物文件列表,逗号分隔")
-    parser.add_argument("--check", default=None, help="检查结果,格式: tool:passed:note")
-    parser.add_argument("--note", default=None, help="备注文本")
-    args = parser.parse_args()
-
-    try:
-        path = update_state(args.module_dir, args.step, args.status,
-                            submodule=args.module, artifacts=args.artifacts,
-                            check=args.check, note=args.note)
-        mod_info = f" [{args.module}]" if args.module else ""
-        print(f"Updated pipeline_state.json:{mod_info} {args.step} -> {args.status}")
-    except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+    raise SystemExit(main())

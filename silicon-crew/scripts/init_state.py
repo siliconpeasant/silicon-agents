@@ -1,142 +1,102 @@
 #!/usr/bin/env python3
-"""
-初始化模块或 IP 包的 pipeline_state.json。
+"""Initialize a single- or multi-module pipeline_state.json."""
 
-单模块模式:
-  python3 init_state.py <module_dir> [module_name]
+from __future__ import annotations
 
-多子模块模式(IP 包):
-  python3 init_state.py <ip_dir> --submodules "mod1,mod2,mod3"
-"""
-import sys
+import argparse
 import json
 import os
-from datetime import datetime, timezone
+import tempfile
+from pathlib import Path
+
+from pipeline_state import compute_next_actions, new_pipeline, now
 
 
-def _new_pipeline() -> dict:
-    return {
-        "doc": {
-            "step_id": "doc",
-            "name": "设计文档编写",
-            "agent": "soc-doc-engineer",
-            "status": "pending",
-            "started_at": None,
-            "completed_at": None,
-            "artifacts": [],
-            "check_results": [],
-            "notes": ""
-        },
-        "rtl": {
-            "step_id": "rtl",
-            "name": "RTL设计与编码",
-            "agent": "soc-rtl-designer",
-            "status": "pending",
-            "started_at": None,
-            "completed_at": None,
-            "artifacts": [],
-            "check_results": [],
-            "notes": ""
-        },
-        "verif": {
-            "step_id": "verif",
-            "name": "验证环境搭建与仿真",
-            "agent": "soc-verification-engineer",
-            "status": "pending",
-            "started_at": None,
-            "completed_at": None,
-            "artifacts": [],
-            "check_results": [],
-            "notes": ""
-        },
-        "syn": {
-            "step_id": "syn",
-            "name": "逻辑综合与时序分析",
-            "agent": "soc-synthesis-engineer",
-            "status": "pending",
-            "started_at": None,
-            "completed_at": None,
-            "artifacts": [],
-            "check_results": [],
-            "notes": ""
-        }
-    }
+def _atomic_write(path: Path, state: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=".pipeline_state.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
-def init_state_single(module_dir: str, module_name: str = None) -> str:
-    module_dir = os.path.abspath(module_dir)
-    module_name = module_name or os.path.basename(os.path.normpath(module_dir))
-
+def init_state_single(module_dir: str, module_name: str | None = None, force: bool = False) -> str:
+    workspace = Path(module_dir).expanduser().resolve()
+    module_name = module_name or workspace.name
+    pipeline = new_pipeline()
     state = {
+        "schema_version": 2,
         "module": module_name,
-        "workspace": module_dir,
+        "workspace": str(workspace),
         "mode": "single",
-        "created_at": _now(),
-        "last_updated": _now(),
-        "pipeline": _new_pipeline(),
-        "next_actions": []
+        "created_at": now(),
+        "last_updated": now(),
+        "pipeline": pipeline,
+        "next_actions": compute_next_actions(pipeline),
     }
-
-    state_path = os.path.join(module_dir, "pipeline_state.json")
-    os.makedirs(module_dir, exist_ok=True)
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-
-    return state_path
+    state_path = workspace / "pipeline_state.json"
+    if state_path.exists() and not force:
+        raise FileExistsError(f"state already exists: {state_path}; use --force to replace it")
+    _atomic_write(state_path, state)
+    return str(state_path)
 
 
-def init_state_multi(ip_dir: str, submodules: list, ip_name: str = None) -> str:
-    ip_dir = os.path.abspath(ip_dir)
-    ip_name = ip_name or os.path.basename(os.path.normpath(ip_dir))
-
+def init_state_multi(
+    ip_dir: str,
+    submodules: list[str],
+    ip_name: str | None = None,
+    force: bool = False,
+) -> str:
+    workspace = Path(ip_dir).expanduser().resolve()
+    if not submodules:
+        raise ValueError("multi-module mode requires at least one submodule")
     modules = {}
-    for mod in submodules:
-        modules[mod] = {
-            "pipeline": _new_pipeline(),
-            "next_actions": []
+    for module in submodules:
+        pipeline = new_pipeline()
+        modules[module] = {
+            "pipeline": pipeline,
+            "next_actions": compute_next_actions(pipeline),
         }
-
     state = {
-        "ip": ip_name,
-        "workspace": ip_dir,
+        "schema_version": 2,
+        "ip": ip_name or workspace.name,
+        "workspace": str(workspace),
         "mode": "multi_module",
-        "created_at": _now(),
-        "last_updated": _now(),
+        "created_at": now(),
+        "last_updated": now(),
         "modules": modules,
-        "next_actions": []
     }
-
-    state_path = os.path.join(ip_dir, "pipeline_state.json")
-    os.makedirs(ip_dir, exist_ok=True)
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-
-    return state_path
+    state_path = workspace / "pipeline_state.json"
+    if state_path.exists() and not force:
+        raise FileExistsError(f"state already exists: {state_path}; use --force to replace it")
+    _atomic_write(state_path, state)
+    return str(state_path)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Initialize pipeline state")
+    parser.add_argument("target_dir")
+    parser.add_argument("name", nargs="?")
+    parser.add_argument("--submodules")
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+    if args.submodules:
+        modules = [item.strip() for item in args.submodules.split(",") if item.strip()]
+        path = init_state_multi(args.target_dir, modules, args.name, args.force)
+        print(f"Created multi-module pipeline_state.json: {path}")
+        print(f"Submodules: {', '.join(modules)}")
+    else:
+        path = init_state_single(args.target_dir, args.name, args.force)
+        print(f"Created pipeline_state.json: {path}")
+    return 0
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Initialize module or IP package pipeline_state.json"
-    )
-    parser.add_argument("target_dir", help="Module or IP package directory")
-    parser.add_argument("name", nargs="?", help="Module name (single) or IP name (multi)")
-    parser.add_argument(
-        "--submodules",
-        help='Comma-separated submodule list for multi-module mode, e.g. "mod1,mod2,mod3"',
-    )
-    args = parser.parse_args()
-
-    if args.submodules:
-        submodules = [s.strip() for s in args.submodules.split(",") if s.strip()]
-        path = init_state_multi(args.target_dir, submodules, args.name)
-        print(f"Created multi-module pipeline_state.json: {path}")
-        print(f"Submodules: {', '.join(submodules)}")
-    else:
-        path = init_state_single(args.target_dir, args.name)
-        print(f"Created pipeline_state.json: {path}")
+    raise SystemExit(main())

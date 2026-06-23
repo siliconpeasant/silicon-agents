@@ -1,5 +1,4 @@
 {
-  "description": "silicon-crew flow + soc-build skill enforcement: inject mandates on SessionStart when cwd is a SoC project",
   "hooks": {
     "SessionStart": [
       {

@@ -1,0 +1,15 @@
+[project]
+name = "silicon-crew-runtime"
+version = "1.0.0"
+description = "Runtime dependencies for silicon-crew MCP servers"
+requires-python = ">=3.10"
+dependencies = [
+  "mcp>=1.25,<2",
+  "openpyxl>=3.1,<4",
+  "pandas>=2.2,<3",
+  "pyyaml>=6,<7",
+  "xlrd>=2,<3",
+]
+
+[tool.uv]
+package = false

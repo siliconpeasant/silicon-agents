@@ -12,16 +12,27 @@ SoC Build MCP Server
 
 import argparse
 import os
-import subprocess
+import re
 import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+if str(PLUGIN_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+
+from mcp_runtime import run_command, run_python
+
 # ---------------------------------------------------------------------------
 # 路径推导
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent / "scripts"
+SUPPORTED_SIMULATORS = {"iverilog", "vcs", "verilator", "xcelium"}
+TEST_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
+HDL_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+SEED_MATRIX_RE = re.compile(r"\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*")
+MCP_SERVER_ACTIVE_ENV = "SILICON_CREW_SOC_BUILD_MCP_ACTIVE"
 
 
 # ---------------------------------------------------------------------------
@@ -30,33 +41,103 @@ SCRIPT_DIR = Path(__file__).parent / "scripts"
 mcp = FastMCP(
     name="soc-build",
     instructions=(
-        "SoC 前端 RTL 集成与自动化生成工具集。\n"
-        "支持项目初始化、Verilog 端口提取、顶层集成、寄存器/CRG/IO 生成、"
-        "filelist 生成、lint 检查等功能。"
+        "SoC 项目脚手架和 EDA Make 目标执行工具。\n"
+        "支持项目/模块创建、filelist、lint、编译、仿真、回归、覆盖率和综合。"
     ),
 )
 
 
 def _run(cmd: list[str], cwd: str = None, timeout: int = 120) -> str:
-    """运行外部命令，统一捕获 stdout/stderr。"""
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        cwd=cwd,
-        timeout=timeout,
-    )
-    out = result.stdout or ""
-    if result.stderr:
-        out += "\n[stderr]\n" + result.stderr
-    if result.returncode != 0:
-        out += f"\n[exit code: {result.returncode}]"
-    return out
+    """Compatibility wrapper retained for tests and downstream imports."""
+    return run_command(cmd, cwd=cwd, timeout=timeout)
 
 
 def _python(script: str, *args: str, cwd: str = None) -> str:
     """调用 scripts/ 目录下的 Python 脚本。"""
-    return _run([sys.executable, str(SCRIPT_DIR / script)] + list(args), cwd=cwd)
+    return run_python(SCRIPT_DIR / script, *args, cwd=cwd)
+
+
+def _module_path(module_dir: str) -> Path:
+    """校验模块目录，避免在非 SoC 模块目录执行 Make 目标。"""
+    path = Path(module_dir).expanduser().resolve()
+    if not path.is_dir():
+        raise ValueError(f"module_dir is not a directory: {path}")
+    if not (path / "Makefile").is_file():
+        raise ValueError(f"module Makefile not found: {path / 'Makefile'}")
+    return path
+
+
+def _simulator(value: str) -> str:
+    if value not in SUPPORTED_SIMULATORS:
+        choices = ", ".join(sorted(SUPPORTED_SIMULATORS))
+        raise ValueError(f"unsupported simulator '{value}'; choose one of: {choices}")
+    return value
+
+
+def _seed(value: int) -> int:
+    if value < 0 or value > 2**31 - 1:
+        raise ValueError("seed must be between 0 and 2147483647")
+    return value
+
+
+def _tests(value: str, field: str = "tests") -> str:
+    if not value:
+        return value
+    names = value.split(",")
+    if len(names) > 256:
+        raise ValueError(f"{field} supports at most 256 names")
+    if any(not TEST_NAME_RE.fullmatch(name) for name in names):
+        raise ValueError(f"{field} must be a comma-separated list of [A-Za-z0-9_.-] names")
+    return value
+
+
+def _seeds(value: str) -> str:
+    if not SEED_MATRIX_RE.fullmatch(value):
+        raise ValueError("seeds must use comma/range syntax such as 1,3,10-20")
+    total = 0
+    for item in value.split(","):
+        if "-" in item:
+            start, end = (int(part) for part in item.split("-", 1))
+            if start > end:
+                raise ValueError(f"invalid descending seed range: {item}")
+            total += end - start + 1
+        else:
+            start = end = int(item)
+            total += 1
+        if start > 2**31 - 1 or end > 2**31 - 1:
+            raise ValueError("seeds must be between 0 and 2147483647")
+        if total > 10000:
+            raise ValueError("seed matrix supports at most 10000 runs")
+    return value
+
+
+def _jobs(value: int) -> int:
+    if value < 1 or value > 128:
+        raise ValueError("jobs must be between 1 and 128")
+    return value
+
+
+def _hdl_identifier(value: str, field: str) -> str:
+    if value and not HDL_IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(f"{field} must be a Verilog identifier")
+    return value
+
+
+def _make(
+    module_dir: str,
+    targets: list[str],
+    variables: dict[str, str | int],
+    timeout: int,
+) -> str:
+    if os.environ.get(MCP_SERVER_ACTIVE_ENV) != "1":
+        raise RuntimeError(
+            "EDA Make targets must run through the registered soc-build MCP server; "
+            "direct Python/Tool object invocation is disabled"
+        )
+    path = _module_path(module_dir)
+    command = ["make", *targets]
+    command.extend(f"{name}={value}" for name, value in variables.items())
+    return _run(command, cwd=str(path), timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -119,31 +200,154 @@ def soc_flist(path: str, output: str = "", recursive: bool = False) -> str:
 
 
 @mcp.tool()
-def soc_lint(module_dir: str, lint_tool: str = "verilator") -> str:
+def soc_lint(module_dir: str, lint_tool: str = "verilator", rtl_top: str = "") -> str:
     """对指定模块执行 lint 检查。
 
     Args:
         module_dir: 包含 Makefile 的模块目录（如 chip/top 或 ip/digital/xxx）
         lint_tool: lint 工具，可选 verilator 或 iverilog
+        rtl_top: 可选 RTL 顶层模块名
     """
-    return _run(
-        ["make", "lint", f"LINT_TOOL={lint_tool}"],
-        cwd=module_dir,
-    )
+    if lint_tool not in {"verilator", "iverilog"}:
+        raise ValueError("lint_tool must be verilator or iverilog")
+    variables = {"LINT_TOOL": lint_tool}
+    if rtl_top:
+        variables["RTL_TOP"] = _hdl_identifier(rtl_top, "rtl_top")
+    return _make(module_dir, ["lint"], variables, timeout=120)
 
 
 @mcp.tool()
-def soc_comp(module_dir: str, simulator: str = "iverilog") -> str:
+def soc_comp(module_dir: str, simulator: str = "iverilog", top_module: str = "") -> str:
     """编译仿真指定模块。
 
     Args:
         module_dir: 包含 Makefile 的模块目录
         simulator: 仿真器，可选 iverilog / vcs / verilator / xcelium
+        top_module: 可选编译顶层模块名
     """
-    return _run(
-        ["make", "comp", f"SIMULATOR={simulator}"],
-        cwd=module_dir,
-    )
+    variables = {"SIMULATOR": _simulator(simulator)}
+    if top_module:
+        variables["TOP_MODULE"] = _hdl_identifier(top_module, "top_module")
+    return _make(module_dir, ["comp"], variables, timeout=600)
+
+
+@mcp.tool()
+def soc_sim(
+    module_dir: str,
+    simulator: str = "vcs",
+    seed: int = 1,
+    test: str = "default",
+    top_module: str = "",
+) -> str:
+    """编译并运行指定模块的一次仿真。
+
+    Args:
+        module_dir: 包含 Makefile 的模块目录
+        simulator: 仿真器，可选 iverilog / vcs / verilator / xcelium
+        seed: 非负随机种子
+        test: 安全的测试名；模块可通过 TEST 变量使用该值
+        top_module: 可选 testbench 顶层模块名
+    """
+    variables = {
+        "SIMULATOR": _simulator(simulator),
+        "SEED": _seed(seed),
+        "TEST": _tests(test, "test"),
+    }
+    if top_module:
+        variables["TOP_MODULE"] = _hdl_identifier(top_module, "top_module")
+    return _make(module_dir, ["comp", "sim"], variables, timeout=600)
+
+
+@mcp.tool()
+def soc_regress(
+    module_dir: str,
+    simulator: str = "vcs",
+    tests: str = "",
+    seeds: str = "1",
+    jobs: int = 1,
+    top_module: str = "",
+) -> str:
+    """执行模块的多测试、多 seed 回归。
+
+    Args:
+        module_dir: 包含 Makefile 和 regress 目标的模块目录
+        simulator: 仿真器，可选 iverilog / vcs / verilator / xcelium
+        tests: 可选的逗号分隔测试名；留空时使用模块 dv/tests/tests.list
+        seeds: seed 列表或范围，例如 1,3,10-20
+        jobs: 并发任务数，范围 1..128
+    """
+    variables: dict[str, str | int] = {
+        "SIMULATOR": _simulator(simulator),
+        "REGRESS_SEEDS": _seeds(seeds),
+        "REGRESS_JOBS": _jobs(jobs),
+    }
+    if tests:
+        variables["REGRESS_TESTS"] = _tests(tests)
+    if top_module:
+        variables["TOP_MODULE"] = _hdl_identifier(top_module, "top_module")
+    return _make(module_dir, ["regress"], variables, timeout=3600)
+
+
+@mcp.tool()
+def soc_coverage(
+    module_dir: str,
+    simulator: str = "vcs",
+    mode: str = "single",
+    test: str = "default",
+    seed: int = 1,
+    tests: str = "",
+    seeds: str = "1",
+    jobs: int = 1,
+    top_module: str = "",
+) -> str:
+    """采集覆盖率并生成模块覆盖率报告。
+
+    Args:
+        module_dir: 包含 Makefile 和 coverage 目标的模块目录
+        simulator: 仿真器；当前项目通常使用 vcs
+        mode: single 执行单次 coverage，regress 执行 coverage-regress
+        test: single 模式测试名
+        seed: single 模式随机种子
+        tests: regress 模式可选逗号分隔测试名
+        seeds: regress 模式 seed 列表或范围
+        jobs: regress 模式并发任务数，范围 1..128
+    """
+    simulator = _simulator(simulator)
+    if mode == "single":
+        variables: dict[str, str | int] = {
+            "SIMULATOR": simulator,
+            "TEST": _tests(test, "test"),
+            "SEED": _seed(seed),
+        }
+        if top_module:
+            variables["TOP_MODULE"] = _hdl_identifier(top_module, "top_module")
+        return _make(module_dir, ["coverage"], variables, timeout=3600)
+    if mode == "regress":
+        variables = {
+            "SIMULATOR": simulator,
+            "REGRESS_SEEDS": _seeds(seeds),
+            "REGRESS_JOBS": _jobs(jobs),
+        }
+        if tests:
+            variables["REGRESS_TESTS"] = _tests(tests)
+        if top_module:
+            variables["TOP_MODULE"] = _hdl_identifier(top_module, "top_module")
+        return _make(module_dir, ["coverage-regress"], variables, timeout=3600)
+    raise ValueError("mode must be single or regress")
+
+
+@mcp.tool()
+def soc_syn(module_dir: str, rtl_top: str = "") -> str:
+    """通过项目 Makefile 对指定 RTL 顶层执行 Yosys 综合。
+
+    Args:
+        module_dir: 包含 Makefile 和 syn 目标的模块目录
+        rtl_top: 可选的 RTL 顶层模块名
+    """
+    variables: dict[str, str | int] = {}
+    if rtl_top:
+        variables["RTL_TOP"] = _hdl_identifier(rtl_top, "rtl_top")
+    return _make(module_dir, ["syn"], variables, timeout=1200)
 
 
 # ---------------------------------------------------------------------------
@@ -155,4 +359,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     transport = "sse" if args.sse else "stdio"
+    os.environ[MCP_SERVER_ACTIVE_ENV] = "1"
     mcp.run(transport=transport)

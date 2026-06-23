@@ -40,25 +40,30 @@ mcp = FastMCP(
 def _generate(input_path: str, output_dir: str = None) -> str:
     """核心生成逻辑"""
     # 延迟导入，避免 MCP 启动时加载失败
-    from scripts.req_parser import ReqTableParser
-    from scripts.pll_recommender import PllRecommender
-    from scripts.reset_table_gen import ResetTreeGenerator
+    try:
+        from scripts.req_parser import ReqTableParser
+        from scripts.pll_recommender import PllRecommender
+        from scripts.reset_table_gen import ResetTreeGenerator
+    except ImportError as exc:
+        raise RuntimeError(
+            "missing CRG table runtime dependencies; run scripts/setup_mcp_env.sh"
+        ) from exc
 
-    if not os.path.exists(input_path):
-        return f"Error: Input file not found: {input_path}"
+    input_file = Path(input_path).expanduser().resolve()
+    if not input_file.is_file():
+        raise ValueError(f"input file not found: {input_file}")
 
     # 推导输出目录
     if not output_dir:
-        output_dir = str(SCRIPT_DIR / "output")
+        output_dir = str(input_file.parent / f"{input_file.stem}_design")
+    else:
+        output_dir = str(Path(output_dir).expanduser().resolve())
     os.makedirs(output_dir, exist_ok=True)
 
-    try:
-        import pandas as pd
-    except ImportError:
-        return "Error: pandas is required. Install with: pip install pandas openpyxl"
+    import pandas as pd
 
     # 解析需求表
-    parser = ReqTableParser(input_path)
+    parser = ReqTableParser(str(input_file))
     signals = parser.parse()
 
     # 推荐 PLL 架构并生成时钟设计表
@@ -132,7 +137,7 @@ def crg_req_to_design(input_path: str, output_dir: str = None) -> str:
 
     Args:
         input_path: 输入需求表文件路径（.xlsx / .xls / .csv）
-        output_dir: 输出目录，留空则使用内置 output/ 目录
+        output_dir: 输出目录；留空则在输入同级创建 <stem>_design
     """
     return _generate(input_path, output_dir=output_dir)
 

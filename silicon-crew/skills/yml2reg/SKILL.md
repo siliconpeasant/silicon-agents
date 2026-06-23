@@ -1,31 +1,25 @@
 ---
 name: yml2reg
-description: 从 YAML 寄存器描述生成 APB/AHB 接口的 Verilog regfile。
+description: Generate APB or AHB Verilog register-file RTL from a YAML register description. Use for deterministic register implementation from an approved YAML source.
 ---
 
-### 3.1 YAML → 寄存器 RTL — `yml2reg/yml2reg.py`
+# YAML to Register RTL
 
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/yml2reg/scripts/yml2reg/yml2reg.py <reg.yml> <apb|ahb>
-```
+Call the registered `yml2reg` MCP tool with an existing YAML file and `protocol=apb|ahb`. Output is written beside the YAML input; failures are MCP tool errors.
 
-从 YAML 寄存器描述生成 APB/AHB 接口的 Verilog regfile。
+Supported access types are `rw`, `ro`, `wo`, `w1t`, and `wc`.
 
-**支持访问类型**：`rw`、`ro`、`wo`、`w1t`（写1置位）、`wc`（写1清零）
+Minimal YAML:
 
-**输出**：`<NAME>_<PROTOCOL>_regfile.v`（输出到当前工作目录）
-
-**YAML 格式示例**：
 ```yaml
 name: my_reg
 bytes: 4
 offset: 0x000
 registers:
   - name: ctrl_reg
-    description: "control register"
     offset: 0x0
     fields:
-      - { name: enable, lsb: 0, bits: 1, access: rw, reset: 0x0 }
+      - {name: enable, lsb: 0, bits: 1, access: rw, reset: 0x0}
 ```
 
-被 `crg_gen.py` / `io_top_gen.py` / `excel_yml_gen.py` 内部自动调用。
+Review generated bus timing, reset values, address decode, and access semantics before integration. Do not hand-edit generated RTL; change the YAML and regenerate.

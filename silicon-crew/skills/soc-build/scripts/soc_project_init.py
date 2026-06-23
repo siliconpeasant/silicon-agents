@@ -10,38 +10,99 @@ import shutil
 import argparse
 from pathlib import Path
 
+
+PROJECT_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "project"
+CHIP_SUBMODULES = ("core", "bus", "periph", "interconnect", "top", "lib")
+MODULE_DIRECTORIES = (
+    "docs",
+    "de/rtl",
+    "de/lint",
+    "de/cdc",
+    "de/syn",
+    "de/formal",
+    "de/run",
+    "dv/tb",
+    "dv/verif",
+    "dv/tests",
+    "dv/sim",
+    "dv/cov",
+)
+
+
+def _module_makefile(module_name: str, project_depth: int, rtl_entry: bool = False) -> str:
+    """Return the thin module Makefile used by the current shared build system."""
+    parent_chain = "/".join(".." for _ in range(project_depth))
+    lines = [
+        f"# {module_name} module",
+        f"PROJECT_ROOT ?= $(shell cd {parent_chain} && pwd -P)",
+        f"MODULE_NAME   = {module_name}",
+    ]
+    if rtl_entry:
+        lines.extend(
+            [
+                f"RTL_TOP       = {module_name}",
+                f"TOP_MODULE    = {module_name}",
+            ]
+        )
+    lines.append("include $(PROJECT_ROOT)/scripts/common.mk")
+    return "\n".join(lines) + "\n"
+
+
+def _install_project_templates(root: Path, project_name: str) -> None:
+    """Install the versioned project build template and render its project name."""
+    if not PROJECT_TEMPLATE_DIR.is_dir():
+        raise FileNotFoundError(f"project template directory not found: {PROJECT_TEMPLATE_DIR}")
+    shutil.copytree(PROJECT_TEMPLATE_DIR, root, dirs_exist_ok=True, copy_function=shutil.copy2)
+    for path in root.rglob("*"):
+        if path.is_file() and path.parent != root / ".git":
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            rendered = content.replace("vibe_soc", project_name)
+            if rendered != content:
+                path.write_text(rendered, encoding="utf-8")
+
 # =============================================================================
 # 模板内容
 # =============================================================================
 
-MAKEFILE_TOP = """# {project_name} SoC Top-Level Makefile
+MAKEFILE_TOP = """# {project_name} unified build entry
 
-PROJECT_ROOT = $(shell pwd -P)
+PROJECT_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
+MODULE       ?= chip/top
+MODULE_DIR   := $(PROJECT_ROOT)/$(MODULE)
+TARGET       ?= help
+
 export PROJECT_ROOT
 
-.PHONY: help setup lint clean
+.DEFAULT_GOAL := help
+
+.PHONY: help setup list-modules module flist comp sim lint syn clean
 
 help:
 	@echo "{project_name} SoC Build System"
 	@echo "==========================="
-	@echo "  make setup   - 初始化开发环境"
-	@echo "  make lint    - 代码静态检查"
-	@echo "  make clean   - 清理所有生成文件"
-	@echo ""
-	@echo "环境变量:"
-	@echo "  SIMULATOR=vcs|verilator|iverilog|xcelium"
+	@echo "  make list-modules"
+	@echo "  make <target> [MODULE=<path>]"
+	@echo "Targets: flist comp sim lint syn clean"
 
 setup:
-	@echo "[SETUP] Sourcing environment ..."
-	@bash scripts/setup.sh
+	@bash $(PROJECT_ROOT)/scripts/setup.sh
 
-lint:
-	@echo "[LINT] Running static check ..."
-	@verilator --lint-only -Ichip $(shell find chip -name "*.v" -o -name "*.sv")
+list-modules:
+	@find $(PROJECT_ROOT)/chip $(PROJECT_ROOT)/ip -mindepth 2 -maxdepth 3 \
+		-name Makefile ! -path '*/de/Makefile' ! -path '*/dv/Makefile' \
+		-printf '%h\n' | sed 's|^$(PROJECT_ROOT)/||' | sort
 
-clean:
-	@echo "[CLEAN] Cleaning generated files ..."
-	@find . -type d -name run -o -type d -name sim | xargs rm -rf
+module:
+	@test -f "$(MODULE_DIR)/Makefile" || {{ \
+		echo "[ERROR] Invalid MODULE '$(MODULE)'"; exit 2; \
+	}}
+	@$(MAKE) --no-print-directory -C "$(MODULE_DIR)" "$(TARGET)"
+
+flist comp sim lint syn clean:
+	@$(MAKE) --no-print-directory module TARGET=$@
 """
 
 SETUP_SH = """#!/bin/bash
@@ -81,12 +142,17 @@ README_MD = """# {project_name} SoC 前端开发项目
 │   ├── third_party/      # 第三方 IP / 外购软核
 │   └── digital/          # 自研 IP / 复用模块
 │       └── template_ip/  # IP 模板示例 (可独立编译仿真)
-│           ├── rtl/
-│           ├── tb/
+│           ├── docs/
+│           ├── de/       # rtl/lint/cdc/syn/formal/run
+│           ├── dv/       # tb/verif/tests/sim/cov
 │           └── Makefile
 ├── scripts/              # 项目级公共脚本
-│   ├── setup.sh          # 环境初始化
-│   └── common.mk         # 公共仿真编译规则
+│   ├── setup.sh          # 环境初始化与工具检查
+│   ├── paths.mk          # 集中路径定义
+│   ├── config.mk         # 工具链与项目默认配置
+│   ├── common.mk         # 公共构建规则
+│   ├── toolchains/       # 仿真器专用配置
+│   └── validate_filelist.py
 ├── doc/                  # 文档
 │   ├── arch/             # 架构设计文档
 │   └── spec/             # 接口规范与需求
@@ -271,6 +337,9 @@ puts "DC synthesis completed."
 COMMON_MK = r"""# =============================================================================
 # Common Makefile for SoC Project Simulation
 # =============================================================================
+
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
 # 使用方式：在子 Makefile 中定义以下变量，然后 include 本文件
 #
 #   PROJECT_ROOT  = $(shell cd <relative_to_root> && pwd)
@@ -346,7 +415,7 @@ comp:
 	@mkdir -p $(RUN_DIR)
 	$(COMP_CMD)
 
-sim:
+sim: comp
 	@echo "[SIM] Running $(TOP_MODULE) ..."
 	@mkdir -p $(RUN_DIR)
 	$(SIM_CMD) | tee $(RUN_DIR)/sim.log
@@ -381,9 +450,8 @@ RTL_TOP      ?= {top_module}
 # =============================================================================
 # 依赖管理
 # =============================================================================
-# 通过 filelist.mk 自动管理依赖（推荐）
-# 取消下面一行的注释，并编辑对应模块的 de/rtl/filelist.mk 配置依赖
-# include $(PROJECT_ROOT)/chip/core/de/rtl/filelist.mk
+# 通过 filelist.mk 自动管理依赖。
+-include $(PROJECT_ROOT)/chip/top/de/rtl/filelist.mk
 # =============================================================================
 
 RUN_DIR       = $(PROJECT_ROOT)/sim/run
@@ -399,10 +467,14 @@ LINT_TOOL    ?= verilator
 
 # 生成各模块 rtl/filelist.f（使用 $$SOC 绝对路径）
 flist:
-	@$(MAKE) -C $(CHIP_PATH) flist > /dev/null 2>&1 || true
+	@for mod in $(CHIP_PATH)/*; do \
+		if [ -d $$mod/de/rtl ]; then \
+			find $$mod/de/rtl -type f \\( -name "*.v" -o -name "*.sv" \\) | sed 's|^$(PROJECT_ROOT)/|$$SOC/|' | sort > $$mod/de/rtl/filelist.f; \
+		fi; \
+	done
 	@for ip in $(IP_PATH)/digital/* $(IP_PATH)/third_party/*; do \
 		if [ -d $$ip/de/rtl ]; then \
-			find $$ip/de/rtl -maxdepth 1 \\( -name "*.v" -o -name "*.sv" \\) | sed 's|^$(PROJECT_ROOT)/|$$SOC/|' | sort > $$ip/de/rtl/filelist.f; \
+			find $$ip/de/rtl -type f \\( -name "*.v" -o -name "*.sv" \\) | sed 's|^$(PROJECT_ROOT)/|$$SOC/|' | sort > $$ip/de/rtl/filelist.f; \
 		fi; \
 	done
 
@@ -447,9 +519,9 @@ else
 	@sed 's|\\$$SOC|$(PROJECT_ROOT)|g' $(CHIP_PATH)/rtl/filelist.f > $(RUN_DIR)/rtl.f
 endif
 ifeq ($(LINT_TOOL),verilator)
-	@verilator --lint-only -I$(CHIP_PATH)/rtl -I$(IP_PATH) --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log || true
+	@verilator -Wall --lint-only -I$(CHIP_PATH)/rtl -I$(IP_PATH) --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log
 else ifeq ($(LINT_TOOL),iverilog)
-	@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log || true
+	@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log
 else
 	@echo "[LINT] Unknown LINT_TOOL: $(LINT_TOOL)"
 endif
@@ -590,9 +662,9 @@ else
 	@sed 's|\\$$SOC|$(PROJECT_ROOT)|g' $(CHIP_PATH)/rtl/filelist.f > $(RUN_DIR)/rtl.f
 endif
 ifeq ($(LINT_TOOL),verilator)
-	@verilator --lint-only -I$(CHIP_PATH)/rtl --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log || true
+		@verilator -Wall --lint-only -I$(CHIP_PATH)/rtl --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log
 else ifeq ($(LINT_TOOL),iverilog)
-	@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log || true
+		@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log
 else
 	@echo "[LINT] Unknown LINT_TOOL: $(LINT_TOOL)"
 endif
@@ -786,9 +858,8 @@ RTL_TOP      ?= $(IP_NAME)
 # =============================================================================
 # 依赖管理
 # =============================================================================
-# 通过 filelist.mk 自动管理依赖（推荐）
-# 取消下面一行的注释，并编辑 de/rtl/filelist.mk 配置依赖
-# include $(RTL_PATH)/filelist.mk
+# 通过 filelist.mk 自动管理依赖。
+-include $(RTL_PATH)/filelist.mk
 # =============================================================================
 
 RUN_DIR       = $(IP_PATH)/de/run
@@ -814,7 +885,7 @@ SYN_REPORT    = $(SYN_DIR)/synth.log
 flist:
 	@mkdir -p $(RTL_PATH) $(RUN_DIR) $(SIM_DIR)
 	@if [ ! -f $(RTL_PATH)/filelist.f ]; then \
-		find $(RTL_PATH) -maxdepth 1 \\( -name "*.v" -o -name "*.sv" \\) | sed 's|^$(PROJECT_ROOT)/|$$SOC/|' | sort > $(RTL_PATH)/filelist.f; \
+		find $(RTL_PATH) -type f \\( -name "*.v" -o -name "*.sv" \\) | sed 's|^$(PROJECT_ROOT)/|$$SOC/|' | sort > $(RTL_PATH)/filelist.f; \
 		echo "[FLIST] Generated $(RTL_PATH)/filelist.f"; \
 	else \
 		echo "[FLIST] $(RTL_PATH)/filelist.f already exists, skip"; \
@@ -859,9 +930,9 @@ else
 	@sed 's|\\$$SOC|$(PROJECT_ROOT)|g' $(RTL_PATH)/filelist.f > $(RUN_DIR)/rtl.f
 endif
 ifeq ($(LINT_TOOL),verilator)
-	@verilator --lint-only -I$(RTL_PATH) --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log || true
+	@verilator -Wall --lint-only -I$(RTL_PATH) --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log
 else ifeq ($(LINT_TOOL),iverilog)
-	@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log || true
+	@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log
 else
 	@echo "[LINT] Unknown LINT_TOOL: $(LINT_TOOL)"
 endif
@@ -1029,9 +1100,8 @@ SYN_REPORT    = $(SYN_DIR)/synth.log
 # =============================================================================
 # 依赖管理
 # =============================================================================
-# 通过 filelist.mk 自动管理依赖（推荐）
-# 取消下面一行的注释，并编辑 de/rtl/filelist.mk 配置依赖
-# include $(RTL_PATH)/filelist.mk
+# 通过 filelist.mk 自动管理依赖。
+-include $(RTL_PATH)/filelist.mk
 # =============================================================================
 
 .PHONY: flist lint syn
@@ -1040,7 +1110,7 @@ SYN_REPORT    = $(SYN_DIR)/synth.log
 flist:
 	@mkdir -p $(RTL_PATH) $(TB_PATH) $(RUN_DIR) $(SIM_DIR)
 	@if [ ! -f $(RTL_PATH)/filelist.f ]; then \
-		find $(RTL_PATH) -maxdepth 1 \\( -name "*.v" -o -name "*.sv" \\) | sed 's|^$(PROJECT_ROOT)/|$$SOC/|' | sort > $(RTL_PATH)/filelist.f; \
+		find $(RTL_PATH) -type f \\( -name "*.v" -o -name "*.sv" \\) | sed 's|^$(PROJECT_ROOT)/|$$SOC/|' | sort > $(RTL_PATH)/filelist.f; \
 		echo "[FLIST] Generated $(RTL_PATH)/filelist.f"; \
 	else \
 		echo "[FLIST] $(RTL_PATH)/filelist.f already exists, skip"; \
@@ -1084,9 +1154,9 @@ else
 	@sed 's|\\$$SOC|$(PROJECT_ROOT)|g' $(RTL_PATH)/filelist.f > $(RUN_DIR)/rtl.f
 endif
 ifeq ($(LINT_TOOL),verilator)
-	@verilator --lint-only -I$(RTL_PATH) --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log || true
+	@verilator -Wall --lint-only -I$(RTL_PATH) --top-module $(RTL_TOP) -f $(RUN_DIR)/rtl.f 2>&1 | tee $(RUN_DIR)/lint.log
 else ifeq ($(LINT_TOOL),iverilog)
-	@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log || true
+	@iverilog -g2012 -o /dev/null $$(grep -v '^//' $(RUN_DIR)/rtl.f 2>/dev/null | sed '/^$$/d') 2>&1 | tee $(RUN_DIR)/lint.log
 else
 	@echo "[LINT] Unknown LINT_TOOL: $(LINT_TOOL)"
 endif
@@ -1274,16 +1344,16 @@ CLAUDE_MD = """# {project_name} SoC 项目规范
 
 ## SoC 设计流程（强制）
 
-所有 RTL 模块设计必须遵循 4 阶段 SoC swarm 流程：
+所有 RTL 模块设计必须遵循 `doc -> rtl -> {{verif, syn}}` 门控流程：
 
 1. **阶段 1 — 文档**: `soc-doc-engineer` 编写 design_spec.md / interface_spec.md / regmap.md / verification_plan.md
 2. **阶段 2 — RTL**: `soc-rtl-designer` 编写可综合 Verilog-2005 RTL，verilator -Wall lint-clean
-3. **阶段 3 — 验证**: `soc-verification-engineer` 编写 testbench，iverilog 编译 + vvp 仿真，0 ERROR / 0 MISMATCH
-4. **阶段 4 — 综合**: `soc-synthesis-engineer` yosys 综合，产出 netlist.v + timing.rpt + area.rpt，WNS >= 0
+3. **阶段 3 — 验证**: `soc-verification-engineer` 编写自检 testbench，通过 `soc_sim` 执行真实仿真
+4. **阶段 4 — 综合**: `soc-synthesis-engineer` 通过 `soc_syn` 产出网表和综合日志；仅真实 STA 报告可证明时序
 
 ### RTL 阶段特化 agent
 
-阶段 2 (RTL) 根据子模块类型可选择特化 agent，产物结构仍落 `rtl/` + `constraints/`：
+阶段 2 (RTL) 根据子模块类型可选择特化 agent，产物必须落在 `de/rtl/` 和 `de/syn/`：
 
 - **`soc-crg-engineer`** — 子模块是 CRG (时钟复位生成)，从 Excel 配置 (top_info/clk_gen/rst_gen sheet) 驱动。**必须用 `crg_gen` MCP 工具**，禁止手写时钟分频/复位同步逻辑
 - **`soc-integrator`** — 顶层集成，把多个 rtl=done 的子模块拼成 top。**必须用 `soc_integrate` MCP 工具生成 top.v、`soc_flist` MCP 工具生成 filelist**，禁止手写
@@ -1296,14 +1366,14 @@ CLAUDE_MD = """# {project_name} SoC 项目规范
 ## 工具链
 
 - **Lint**: `verilator --lint-only -Wall`（通过 soc-build MCP `soc_lint`）
-- **仿真**: `iverilog + vvp`（通过 soc-build MCP `soc_comp`）
+- **仿真**: 通过 soc-build MCP `soc_sim`（内部先编译再运行）
 - **综合**: `yosys`（通过 soc-build MCP 或 soc-synthesis-engineer）
-- **端口管理**: soc-build `soc_extract`, `soc_snapshot`, `soc_update`
+- **端口管理**: soc-integrate MCP `soc_extract`, `soc_snapshot`, `soc_update`
 
 ## 例外规则
 
 - `std_cell/` 下的简单组合逻辑标准单元可跳过阶段 1，但仍需阶段 2→4
-- Bug 修复/小改动可跳过阶段 1 和 5，直接改 RTL + 跑验证
+- 经批准的 Bug 修复/小改动可记录文档阶段例外，再执行 RTL 与验证
 
 ## 编码规范
 
@@ -1401,21 +1471,25 @@ FILES = {
 def create_ip_template(root: Path, ip_name: str, project_name: str, ip_type: str = "digital"):
     """在 ip/<type>/ 下创建可独立编译的 IP 模板"""
     ip_dir = root / "ip" / ip_type / ip_name
-    ip_dirs = ["de/rtl", "de/lint", "de/cdc", "de/syn", "de/formal",
-               "dv/tb", "dv/verif", "dv/tests", "de/run", "dv/sim"]
-    for d in ip_dirs:
+    for d in MODULE_DIRECTORIES:
         (ip_dir / d).mkdir(parents=True, exist_ok=True)
 
     fmt = {"ip_name": ip_name, "project_name": project_name}
     (ip_dir / "de" / "rtl" / f"{ip_name}.v").write_text(IP_RTL_V.format(**fmt), encoding="utf-8")
+    (ip_dir / "de" / "rtl" / "filelist.f").write_text(
+        f"$SOC/ip/{ip_type}/{ip_name}/de/rtl/{ip_name}.v\n", encoding="utf-8"
+    )
     (ip_dir / "dv" / "tb" / f"tb_{ip_name}.sv").write_text(IP_TB_SV.format(**fmt), encoding="utf-8")
     (ip_dir / "de" / "Makefile").write_text(SUBDIR_MAKEFILE, encoding="utf-8")
     (ip_dir / "dv" / "Makefile").write_text(SUBDIR_MAKEFILE, encoding="utf-8")
-    (ip_dir / "Makefile").write_text(IP_MAKEFILE.format(**fmt), encoding="utf-8")
+    (ip_dir / "Makefile").write_text(_module_makefile(ip_name, 3), encoding="utf-8")
     (ip_dir / "README.md").write_text(IP_README_MD.format(**fmt), encoding="utf-8")
     fl_fmt = {"module_name": ip_name, "module_name_upper": ip_name.upper().replace("-", "_")}
     (ip_dir / "de" / "rtl" / "filelist.mk").write_text(FILELIST_MK.format(**fl_fmt), encoding="utf-8")
-    (ip_dir / ".gitignore").write_text("run/\n*.vcd\n*.vpd\n*.log\n", encoding="utf-8")
+    (ip_dir / ".gitignore").write_text(
+        "de/run/\ndv/sim/\ndv/cov/\n.pipeline_state.lock\n*.vcd\n*.vpd\n*.log\n",
+        encoding="utf-8",
+    )
 
 
 def init_project(project_name, output_path, top_module=None):
@@ -1430,6 +1504,9 @@ def init_project(project_name, output_path, top_module=None):
     # Create directories
     for d in DIRECTORIES:
         (root / d).mkdir(parents=True, exist_ok=True)
+    for sub in CHIP_SUBMODULES:
+        for d in MODULE_DIRECTORIES:
+            (root / "chip" / sub / d).mkdir(parents=True, exist_ok=True)
 
     # Write files
     fmt = {"project_name": project_name, "top_module": top_module}
@@ -1437,28 +1514,36 @@ def init_project(project_name, output_path, top_module=None):
         file_path = root / rel_path.format(**fmt)
         file_path.write_text(template.format(**fmt), encoding="utf-8")
 
+    # Install the current shared build system after legacy embedded templates so
+    # the versioned project template is authoritative.
+    _install_project_templates(root, project_name)
+
     # Create chip sub-module files (Makefile, README, TB, filelist.mk)
-    chip_subs = ["core", "bus", "periph", "interconnect", "top", "lib"]
-    for sub in chip_subs:
-        sub_fmt = {"module_name": sub, "project_name": project_name}
-        fl_fmt = {"module_name": sub, "module_name_upper": sub.upper().replace("-", "_")}
-        (root / "chip" / sub / "Makefile").write_text(CHIP_SUB_MAKEFILE.format(**sub_fmt), encoding="utf-8")
+    for sub in CHIP_SUBMODULES:
+        module_name = top_module if sub == "top" else sub
+        sub_fmt = {"module_name": module_name, "project_name": project_name}
+        fl_fmt = {"module_name": module_name, "module_name_upper": module_name.upper().replace("-", "_")}
+        (root / "chip" / sub / "Makefile").write_text(
+            _module_makefile(module_name, 2, rtl_entry=sub == "top"), encoding="utf-8"
+        )
         (root / "chip" / sub / "README.md").write_text(CHIP_SUB_README_MD.format(**sub_fmt), encoding="utf-8")
-        (root / "chip" / sub / "dv" / "tb" / f"tb_{sub}.sv").write_text(CHIP_SUB_TB_SV.format(**sub_fmt), encoding="utf-8")
+        (root / "chip" / sub / "dv" / "tb" / f"tb_{module_name}.sv").write_text(CHIP_SUB_TB_SV.format(**sub_fmt), encoding="utf-8")
         (root / "chip" / sub / "de" / "Makefile").write_text(SUBDIR_MAKEFILE, encoding="utf-8")
         (root / "chip" / sub / "dv" / "Makefile").write_text(SUBDIR_MAKEFILE, encoding="utf-8")
-        (root / "chip" / sub / "de" / "rtl" / f"{sub}.v").write_text(CHIP_SUB_RTL_V.format(**sub_fmt), encoding="utf-8")
+        rtl_file = root / "chip" / sub / "de" / "rtl" / f"{module_name}.v"
+        if sub != "top":
+            rtl_file.write_text(CHIP_SUB_RTL_V.format(**sub_fmt), encoding="utf-8")
+        (root / "chip" / sub / "de" / "rtl" / "filelist.f").write_text(
+            f"$SOC/chip/{sub}/de/rtl/{module_name}.v\n", encoding="utf-8"
+        )
         (root / "chip" / sub / "de" / "rtl" / "filelist.mk").write_text(FILELIST_MK.format(**fl_fmt), encoding="utf-8")
-
-    # Copy common.mk from skill scripts to project
-    skill_script_dir = Path(__file__).parent
-    shutil.copy(skill_script_dir / "common.mk", root / "scripts/common.mk")
 
     # Create IP template
     create_ip_template(root, "template_ip", project_name, "digital")
 
-    # Make setup.sh executable
-    (root / "scripts/setup.sh").chmod(0o755)
+    # Keep entrypoints executable after template rendering/copying.
+    for entrypoint in ("setup", "setup.sh", "setup.csh"):
+        (root / "scripts" / entrypoint).chmod(0o755)
 
     print(f"[OK] SoC project '{project_name}' initialized at: {root.absolute()}")
     print(f"[INFO] Top module default: {top_module}")
@@ -1507,17 +1592,22 @@ def add_chip_module(module_name, project_path):
     project_name = root.name
 
     # 创建目录
-    for d in ["de/rtl", "de/lint", "de/cdc", "de/syn", "de/formal",
-              "dv/tb", "dv/verif", "dv/tests", "de/run", "dv/sim"]:
+    for d in MODULE_DIRECTORIES:
         (module_dir / d).mkdir(parents=True, exist_ok=True)
 
     # 写入 Makefile、README、Testbench 和子目录 wrapper Makefile
     fmt = {"module_name": module_name, "project_name": project_name}
-    (module_dir / "Makefile").write_text(CHIP_SUB_MAKEFILE.format(**fmt), encoding="utf-8")
+    (module_dir / "Makefile").write_text(_module_makefile(module_name, 2), encoding="utf-8")
     (module_dir / "README.md").write_text(CHIP_SUB_README_MD.format(**fmt), encoding="utf-8")
     (module_dir / "dv" / "tb" / f"tb_{module_name}.sv").write_text(CHIP_SUB_TB_SV.format(**fmt), encoding="utf-8")
     (module_dir / "de" / "Makefile").write_text(SUBDIR_MAKEFILE, encoding="utf-8")
     (module_dir / "dv" / "Makefile").write_text(SUBDIR_MAKEFILE, encoding="utf-8")
+    (module_dir / "de" / "rtl" / f"{module_name}.v").write_text(
+        CHIP_SUB_RTL_V.format(**fmt), encoding="utf-8"
+    )
+    (module_dir / "de" / "rtl" / "filelist.f").write_text(
+        f"$SOC/chip/{module_name}/de/rtl/{module_name}.v\n", encoding="utf-8"
+    )
 
     fl_fmt = {"module_name": module_name, "module_name_upper": module_name.upper().replace("-", "_")}
     (module_dir / "de" / "rtl" / "filelist.mk").write_text(FILELIST_MK.format(**fl_fmt), encoding="utf-8")

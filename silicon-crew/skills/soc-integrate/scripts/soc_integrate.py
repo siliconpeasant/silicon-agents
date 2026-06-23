@@ -141,14 +141,13 @@ def parse_ports_from_section(section):
     # 使用更智能的方法：按分号/逗号分割，但要注意括号匹配
     items = split_port_items(section)
     
+    inherited = None
     for item in items:
         item = item.strip()
         if not item:
             continue
-        
-        port = parse_single_port(item)
-        if port:
-            ports.append(port)
+        port, inherited = parse_single_port(item, inherited)
+        ports.append(port)
     
     return ports
 
@@ -185,7 +184,7 @@ def split_port_items(section):
     return items
 
 
-def parse_single_port(item):
+def parse_single_port(item, inherited=None):
     """解析单个端口声明"""
     # 模式: [direction] [reg/wire] [width] name
     # 简化模式: direction width name
@@ -195,17 +194,29 @@ def parse_single_port(item):
     
     # 匹配方向
     direction_match = re.match(r'(input|output|inout)\b', item, re.IGNORECASE)
-    if not direction_match:
-        return None
-    
-    direction = direction_match.group(1).lower()
-    remaining = item[direction_match.end():].strip()
+    if direction_match:
+        direction = direction_match.group(1).lower()
+        remaining = item[direction_match.end():].strip()
+        inherited_width = ""
+    elif inherited:
+        direction, inherited_width = inherited
+        remaining = item
+    else:
+        raise ValueError(
+            "only ANSI-style port declarations are supported; "
+            f"cannot parse port item: {item!r}"
+        )
     
     # 跳过 reg/wire 关键字
-    remaining = re.sub(r'^(reg|wire|logic)\b\s*', '', remaining, flags=re.IGNORECASE).strip()
+    remaining = re.sub(r'^(reg|wire|logic|var)\b\s*', '', remaining, flags=re.IGNORECASE).strip()
+    if re.match(r'^(signed|unsigned)\b', remaining, re.IGNORECASE) or '::' in remaining:
+        raise ValueError(
+            "signed or package-typed ports require a normalized wrapper: "
+            f"{item!r}"
+        )
     
     # 提取位宽 [msb:lsb]
-    width = ""
+    width = inherited_width
     width_match = re.match(r'(\[.*?\])', remaining)
     if width_match:
         width = width_match.group(1)
@@ -215,9 +226,10 @@ def parse_single_port(item):
     name_match = re.match(r'(\w+)', remaining)
     if name_match:
         name = name_match.group(1)
-        return (direction, width, name)
-    
-    return None
+        port = (direction, width, name)
+        return port, (direction, width)
+
+    raise ValueError(f"cannot parse ANSI port item: {item!r}")
 
 
 def generate_instance(module, instance_name=None, signal_prefix=None, show_width=True):
