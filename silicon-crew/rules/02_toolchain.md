@@ -10,6 +10,7 @@ Use the registered MCP server/tool by logical name. The host may prefix the expo
 | compile/single simulation | `soc-build` | `soc_comp`, `soc_sim` |
 | regression/coverage | `soc-build` | `soc_regress`, `soc_coverage` |
 | synthesis | `soc-build` | `soc_syn` |
+| physical design | `soc-openroad` | `soc_openroad_init`, `soc_openroad_run`, `soc_openroad_status` |
 | ports/top/wrapper/snapshots | `soc-integrate` | corresponding `soc_*` tool |
 | YAML registers | `yml2reg` | `yml2reg` |
 | Excel registers | `excel-yml-gen` | `excel_yml_gen` |
@@ -27,3 +28,4 @@ Use the registered MCP server/tool by logical name. The host may prefix the expo
 - Simulation compiles before running and records its real log under `dv/sim/`.
 - Synthesis uses the complete project filelist. Yosys synthesis is structural evidence, not STA.
 - Timing closure may be claimed only from a real STA report. Estimated or hand-written WNS/TNS is invalid.
+- OpenROAD-flow-scripts execution must run through the registered `soc-openroad` MCP server. Keep ORFS/OpenROAD source trees independent; design-owned handoff files live under `pd/openroad/`.

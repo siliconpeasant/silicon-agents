@@ -33,6 +33,7 @@ This cwd is a silicon-crew SoC project. For RTL creation or material refactoring
 - Use the gated `doc -> rtl -> {{verif, syn}}` workflow and `pipeline_state.json`.
 - Use role agents when the host supports them; otherwise use the `soc-pipeline` Skill with a generic subagent.
 - Stage agents must use registered MCP tools. Verification must call `soc-build.soc_sim`; no direct `make`, `iverilog`, `vvp`, or other EDA shell fallback.
+- Physical-design handoff uses `soc-openroad`; keep OpenROAD-flow-scripts/OpenROAD directories independent and store project-owned config under `pd/openroad/`.
 - Use only `docs/`, `de/rtl/`, `de/syn/`, `de/run/`, `dv/tb/`, and `dv/sim/` artifact roots.
 - A stage is done only when artifacts exist and every recorded check passes. Never fabricate simulation PASS or timing WNS/TNS.
 - `crg-gen` is currently not registered; do not schedule CRG RTL generation until it is available.

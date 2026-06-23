@@ -47,6 +47,14 @@
         "./scripts/run_mcp_python.sh",
         "./skills/cr-tree-diag-gen/mcp_server.py"
       ]
+    },
+    "soc-openroad": {
+      "command": "/bin/sh",
+      "cwd": ".",
+      "args": [
+        "./scripts/run_mcp_python.sh",
+        "./skills/soc-openroad/mcp_server.py"
+      ]
     }
   }
 }

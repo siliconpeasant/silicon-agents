@@ -28,6 +28,9 @@ class McpRegistryTest(unittest.TestCase):
                 "cr_tree_diag_gen", "cr_tree_diag_gen_drawio",
                 "cr_tree_diag_gen_excalidraw",
             },
+            "soc-openroad": {
+                "soc_openroad_init", "soc_openroad_run", "soc_openroad_status",
+            },
         }
         for name, expected in servers.items():
             path = ROOT / "skills" / name / "mcp_server.py"

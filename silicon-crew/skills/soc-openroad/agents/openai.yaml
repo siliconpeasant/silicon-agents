@@ -1,0 +1,4 @@
+interface:
+  display_name: "SoC OpenROAD"
+  short_description: "OpenROAD physical design flow handoff"
+  default_prompt: "Use $soc-openroad to prepare and run an OpenROAD-flow-scripts stage for this SoC design."

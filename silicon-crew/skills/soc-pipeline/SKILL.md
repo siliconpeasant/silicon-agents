@@ -1,6 +1,6 @@
 ---
 name: soc-pipeline
-description: Orchestrate gated SoC RTL creation, refactoring, verification, synthesis, CRG routing, and top integration. Use when Codex must create or materially change Verilog/SystemVerilog modules, coordinate stage agents, or recover a failed silicon-crew pipeline.
+description: Orchestrate gated SoC RTL creation, refactoring, verification, synthesis, OpenROAD physical-design handoff, CRG routing, and top integration. Use when Codex must create or materially change Verilog/SystemVerilog modules, coordinate stage agents, prepare physical-design handoff, or recover a failed silicon-crew pipeline.
 ---
 
 # SoC Pipeline
@@ -16,6 +16,7 @@ Coordinate work; do not implement RTL or testbench content in the coordinator.
    - normal logic: `soc-rtl-designer`
    - top integration: `soc-integrator`
    - CRG: `soc-crg-engineer`, only when `crg-gen` is registered
+   - OpenROAD physical-design handoff: `soc-pd-engineer`
 
 ## Delegation
 
@@ -34,7 +35,7 @@ After each role returns, query state immediately and verify status, artifacts, a
 ## Execution contract
 
 - Canonical paths: `docs/`, `de/rtl/`, `de/syn/`, `dv/tb/`, `dv/sim/`.
-- EDA execution uses registered `soc-build` MCP tools. Verification calls `soc_sim`; synthesis calls `soc_syn`. No direct EDA shell fallback.
+- EDA execution uses registered MCP tools. Verification calls `soc-build.soc_sim`; synthesis calls `soc-build.soc_syn`; physical-design handoff calls `soc-openroad.soc_openroad_*`. No direct EDA shell fallback.
 - `doc -> rtl`; verification and synthesis may run independently after RTL passes.
 - Treat estimated timing and synthetic PASS markers as failures of validation integrity.
 - For an approved doc-stage exception, record `doc skipped` with a concrete note before starting RTL.

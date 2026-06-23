@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "silicon-crew",
   "version": "1.0.0",
-  "description": "Silicon Crew — gated SoC documentation, RTL, verification and synthesis roles with MCP-only EDA execution, top integration, register generation, and clock/reset design tools.",
+  "description": "Silicon Crew — gated SoC documentation, RTL, verification, synthesis and OpenROAD physical-design roles with MCP-only EDA execution, top integration, register generation, and clock/reset design tools.",
   "author": {
     "name": "Silicon Peasant",
     "url": "https://github.com/siliconpeasant"
@@ -19,6 +19,8 @@
     "clock-tree",
     "reset-tree",
     "diagram",
+    "openroad",
+    "physical-design",
     "siliconpeasant"
   ],
   "homepage": "https://github.com/siliconpeasant/silicon-agents",
@@ -46,6 +48,10 @@
     "cr-tree-diag-gen": {
       "command": "/bin/sh",
       "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run_mcp_python.sh", "${CLAUDE_PLUGIN_ROOT}/skills/cr-tree-diag-gen/mcp_server.py"]
+    },
+    "soc-openroad": {
+      "command": "/bin/sh",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run_mcp_python.sh", "${CLAUDE_PLUGIN_ROOT}/skills/soc-openroad/mcp_server.py"]
     }
   }
 }
