@@ -1,0 +1,20 @@
+{
+  "name": "silicon-local",
+  "interface": {
+    "displayName": "Silicon Local"
+  },
+  "plugins": [
+    {
+      "name": "silicon-crew",
+      "source": {
+        "source": "local",
+        "path": "./silicon-crew"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
